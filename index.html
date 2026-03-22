@@ -909,10 +909,11 @@ async function gdriveLoad() {
       const { files } = await r.json();
       if (!files?.length) return toast('No NetRackManager files found in Google Drive.', 'error');
 
+      _gdrivePendingFiles = files;
       openModal(`
         <h3>☁ Load from Google Drive</h3>
         <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
-          Select a project file to import. Your existing local projects are not affected.
+          Select a project file to import, or load all at once. Your existing local projects are not affected.
         </p>
         <div style="display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow-y:auto">
           ${files.map(f => {
@@ -932,10 +933,49 @@ async function gdriveLoad() {
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="gdriveImportAll()">☁ Load All (${files.length})</button>
         </div>
       `, '500px');
     } catch (err) { toast('Drive load failed: ' + err.message, 'error'); }
   });
+}
+
+let _gdrivePendingFiles = [];
+
+async function gdriveImportAll() {
+  const files = _gdrivePendingFiles;
+  if (!files?.length) return;
+  closeModal();
+  toast(`☁ Loading ${files.length} project${files.length!==1?'s':''} from Google Drive…`);
+  let loaded = 0, skipped = 0, failed = 0;
+  for (const f of files) {
+    try {
+      const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
+      const text = await r.text();
+      let p = null, importedColors = null;
+      const parsed = JSON.parse(text);
+      if (parsed._netrack_version === 2 && parsed.project) {
+        p = parsed.project; importedColors = parsed.typeColors;
+      } else if (parsed.id && parsed.name) {
+        p = parsed;
+      } else { failed++; continue; }
+      if (!p.id || !p.name) { failed++; continue; }
+      migrateProject(p);
+      const existing = state.projects.findIndex(x => x.id === p.id);
+      if (existing >= 0) {
+        state.projects[existing] = p;
+      } else {
+        state.projects.push(p);
+      }
+      if (importedColors) state.typeColors = Object.assign({}, importedColors, state.typeColors);
+      loaded++;
+    } catch (err) { failed++; }
+  }
+  save();
+  renderProjects();
+  const parts = [`${loaded} loaded`];
+  if (failed) parts.push(`${failed} failed`);
+  toast(`☁ ${parts.join(', ')}`, loaded > 0 ? 'success' : 'error');
 }
 
 async function gdriveImportFile(fileId, fileName) {
@@ -3628,6 +3668,8 @@ function savePort(switchId, portNum) {
   // If this is a patch panel port edited from the panel modal, re-open the panel modal
   if (sw.deviceType === 'Patch Panel' && state._ppModalOrigin) {
     openPatchPanelModal(switchId);
+  } else if (state.currentView === 'racks') {
+    renderRacks();
   } else {
     renderPorts();
   }
@@ -4139,12 +4181,19 @@ async function lookupMacManufacturers() {
   toast(`Looking up ${needsLookup.length} MAC address${needsLookup.length!==1?'es':''}…`);
   let updated = 0, failed = 0;
 
-  // Helper: try fetching manufacturer via a CORS proxy wrapping macvendors.com
+  // Helper: try fetching manufacturer via CORS-enabled proxy → macvendors.com
   async function fetchVendor(mac6) {
-    // Strategy 1: allorigins.win JSON wrapper (most reliable CORS proxy)
+    // Strategy 1: codetabs.com CORS proxy (has Access-Control-Allow-Origin: *)
     try {
-      const apiUrl = 'https://api.macvendors.com/' + encodeURIComponent(mac6);
-      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(apiUrl);
+      const r = await fetch(`https://api.codetabs.com/v1/proxy/?quest=https://api.macvendors.com/${mac6}`, { signal: AbortSignal.timeout(10000) });
+      if (r.ok) {
+        const text = (await r.text()).trim();
+        if (text && text.length < 200 && !text.toLowerCase().includes('not found') && !text.startsWith('<') && !text.startsWith('{')) return text;
+      }
+    } catch(e) {}
+    // Strategy 2: allorigins.win JSON wrapper (backup)
+    try {
+      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent('https://api.macvendors.com/' + mac6);
       const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
       if (r.ok) {
         const j = await r.json();
@@ -4152,14 +4201,6 @@ async function lookupMacManufacturers() {
           const text = j.contents.trim();
           if (text && text.length < 200 && !text.toLowerCase().includes('not found') && !text.startsWith('<') && !text.startsWith('{')) return text;
         }
-      }
-    } catch(e) {}
-    // Strategy 2: direct fetch (works if site is served from a permissive environment)
-    try {
-      const r = await fetch('https://api.macvendors.com/' + encodeURIComponent(mac6), { signal: AbortSignal.timeout(5000) });
-      if (r.ok) {
-        const text = (await r.text()).trim();
-        if (text && text.length < 200 && !text.toLowerCase().includes('not found') && !text.startsWith('<')) return text;
       }
     } catch(e) {}
     return null;
