@@ -2995,8 +2995,8 @@ function buildRackPortSquares(dev, p) {
           ? `border-color:var(--accent);box-shadow:0 0 3px rgba(0,232,122,0.6);`
           : (vlans[i] ? `border-color:${vc};` : '');
       const dataAttrs = assigned
-        ? `data-owner-id="${dev.id}" data-devid="${connDev.id}" data-portlabel="Port ${i} · ${esc(dev.name)}" data-devname="${esc(connDev.name)}" data-devip="${esc(connDev.ip||'')}" data-devmac="${esc(connDev.mac||'')}"`
-        : `data-owner-id="${dev.id}" data-portnum="Port ${i} · ${esc(dev.name)}"`;
+        ? `data-owner-id="${dev.id}" data-portidx="${i}" data-devid="${connDev.id}" data-portlabel="Port ${i} · ${esc(dev.name)}" data-devname="${esc(connDev.name)}" data-devip="${esc(connDev.ip||'')}" data-devmac="${esc(connDev.mac||'')}"`
+        : `data-owner-id="${dev.id}" data-portidx="${i}" data-portnum="Port ${i} · ${esc(dev.name)}"`;
       return `<div class="rack-port-sq" ${dataAttrs} style="${style}" onclick="event.stopPropagation();assignPort('${dev.id}',${i})"></div>`;
     }).join('');
   }
@@ -3030,8 +3030,8 @@ function buildPatchPanelFaceplate(dev, p) {
     const title = titleParts.join(' · ');
     const clrStyle = assigned ? `--clr:${dc};` : '';
     const dataAttrs = assigned
-      ? `data-owner-id="${dev.id}" data-devid="${connDev.id}" data-portlabel="Port ${i}${label?' · '+label:''} · ${esc(dev.name)}" data-devname="${esc(connDev.name)}" data-devip="${esc(connDev.ip||'')}" data-devmac="${esc(connDev.mac||'')}"`
-      : `data-owner-id="${dev.id}" data-portnum="Port ${i}${label?' · '+esc(label):''} · ${esc(dev.name)}"`;
+      ? `data-owner-id="${dev.id}" data-portidx="${i}" data-devid="${connDev.id}" data-portlabel="Port ${i}${label?' · '+label:''} · ${esc(dev.name)}" data-devname="${esc(connDev.name)}" data-devip="${esc(connDev.ip||'')}" data-devmac="${esc(connDev.mac||'')}"`
+      : `data-owner-id="${dev.id}" data-portidx="${i}" data-portnum="Port ${i}${label?' · '+esc(label):''} · ${esc(dev.name)}"`;
     const labelBold = (!assigned && label) ? 'font-weight:700;' : '';
     portEls.push(`<div class="pp-port${assigned?' pp-assigned':(!assigned&&label?' pp-labeled':'')}" style="${clrStyle}" ${dataAttrs} onclick="event.stopPropagation();assignPort('${dev.id}',${i})">
       <div class="pp-port-num">${i}</div>
@@ -3183,12 +3183,28 @@ function onSlotDrop(e, rackId, u) {
 function rackPortHover(el, e) {
   const devId   = el.dataset.devid;
   const ownerId = el.dataset.ownerId;
+  const portIdx = el.dataset.portidx;
 
   el.classList.add('port-hl');
 
   if (devId && ownerId) {
+    // Highlight all ports on other devices that connect to the same target
     document.querySelectorAll(`[data-devid="${devId}"]`)
       .forEach(p => { if (p !== el) p.classList.add('port-hl'); });
+
+    // Highlight the specific peer port on the connected device (bidirectional glow)
+    if (portIdx && ownerId) {
+      const p = getProject();
+      const ownerDev = p.devices.find(d => d.id === ownerId);
+      if (ownerDev) {
+        const peerPortNum = (ownerDev.portPeerPort || {})[portIdx];
+        if (peerPortNum) {
+          // Find the port element on the connected device with that port index
+          const peerEl = document.querySelector(`[data-owner-id="${devId}"][data-portidx="${peerPortNum}"]`);
+          if (peerEl) peerEl.classList.add('port-hl');
+        }
+      }
+    }
   }
 
   const tip = document.getElementById('rack-port-tooltip');
@@ -3483,10 +3499,18 @@ function assignPort(switchId, portNum) {
     <div class="form-row"><label>Connected Device</label>
       <select class="form-control" id="port-device" onchange="${isPatchPanel ? '' : `onPortDeviceChange(this,'${switchId}',${portNum})`}">
         <option value="">— Empty / Unassign —</option>
-        ${others.map(d => {
-          const dc = dtColor(d.deviceType||'Misc.');
-          return `<option value="${d.id}" ${d.id===curr?'selected':''}>${esc(d.name)} (${esc(d.deviceType||'Misc.')}${d.ip?' · '+esc(d.ip):''})`;
-        }).join('')}
+        ${(() => {
+          const byType = {};
+          others.forEach(d => { const t = d.deviceType || 'Misc.'; if (!byType[t]) byType[t] = []; byType[t].push(d); });
+          const typeOrder = ['Switch','Router','Firewall','Modem','Server','NAS','AP','PC/Workstation','IP Phone','IP Camera','Access Control','APC/UPS','Patch Panel','Misc Rack-Mounted','IoT Device','Printer','Fax Machine','Smartphone/Tablet','Misc.'];
+          const sorted = [...typeOrder.filter(t => byType[t]), ...Object.keys(byType).filter(t => !typeOrder.includes(t))];
+          return sorted.map(type => {
+            const devs = byType[type].sort((a,b) => (a.name||'').localeCompare(b.name||''));
+            return `<optgroup label="${esc(type)}">` +
+              devs.map(d => `<option value="${d.id}" ${d.id===curr?'selected':''}>${esc(d.name)}${d.ip?' · '+esc(d.ip):''}</option>`).join('') +
+              `</optgroup>`;
+          }).join('');
+        })()}
       </select>
     </div>
     ${!isPatchPanel ? `
@@ -4118,11 +4142,11 @@ async function lookupMacManufacturers() {
     const mac = dev.mac.replace(/[^0-9a-fA-F]/g,'').slice(0,6).toUpperCase();
     if (mac.length < 6) { failed++; continue; }
     try {
-      const resp = await fetch(`https://api.maclookup.app/v2/macs/${mac}`, { signal: AbortSignal.timeout(4000) });
+      const resp = await fetch(`https://api.macvendors.com/${mac}`, { signal: AbortSignal.timeout(5000) });
       if (resp.ok) {
-        const data = await resp.json();
-        if (data.found && data.company) {
-          dev.manufacturer = data.company;
+        const text = (await resp.text()).trim();
+        if (text && !text.toLowerCase().includes('not found')) {
+          dev.manufacturer = text;
           updated++;
         } else { failed++; }
       } else { failed++; }
