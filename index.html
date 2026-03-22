@@ -4136,22 +4136,42 @@ async function lookupMacManufacturers() {
   }
   const needsLookup = p.devices.filter(d => d.mac && isMissing(d.manufacturer));
   if (needsLookup.length === 0) return toast('No devices with missing manufacturer info', 'error');
-  toast(`Looking up ${needsLookup.length} MAC address${needsLookup.length!==1?'es':''}...`);
+  toast(`Looking up ${needsLookup.length} MAC address${needsLookup.length!==1?'es':''}…`);
   let updated = 0, failed = 0;
+
+  // Helper: try fetching manufacturer via a CORS proxy wrapping macvendors.com
+  async function fetchVendor(mac6) {
+    // Strategy 1: allorigins.win JSON wrapper (most reliable CORS proxy)
+    try {
+      const apiUrl = 'https://api.macvendors.com/' + encodeURIComponent(mac6);
+      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(apiUrl);
+      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.status && j.status.http_code === 200 && j.contents) {
+          const text = j.contents.trim();
+          if (text && text.length < 200 && !text.toLowerCase().includes('not found') && !text.startsWith('<') && !text.startsWith('{')) return text;
+        }
+      }
+    } catch(e) {}
+    // Strategy 2: direct fetch (works if site is served from a permissive environment)
+    try {
+      const r = await fetch('https://api.macvendors.com/' + encodeURIComponent(mac6), { signal: AbortSignal.timeout(5000) });
+      if (r.ok) {
+        const text = (await r.text()).trim();
+        if (text && text.length < 200 && !text.toLowerCase().includes('not found') && !text.startsWith('<')) return text;
+      }
+    } catch(e) {}
+    return null;
+  }
+
   for (const dev of needsLookup) {
     const mac = dev.mac.replace(/[^0-9a-fA-F]/g,'').slice(0,6).toUpperCase();
     if (mac.length < 6) { failed++; continue; }
-    try {
-      const resp = await fetch(`https://api.macvendors.com/${mac}`, { signal: AbortSignal.timeout(5000) });
-      if (resp.ok) {
-        const text = (await resp.text()).trim();
-        if (text && !text.toLowerCase().includes('not found')) {
-          dev.manufacturer = text;
-          updated++;
-        } else { failed++; }
-      } else { failed++; }
-    } catch(err) { failed++; }
-    await new Promise(r => setTimeout(r, 200));
+    const vendor = await fetchVendor(mac);
+    if (vendor) { dev.manufacturer = vendor; updated++; }
+    else { failed++; }
+    await new Promise(r => setTimeout(r, 1100));
   }
   save();
   toast(`Updated ${updated} manufacturer${updated!==1?'s':''}${failed?' ('+failed+' not found)':''}`, updated>0?'success':'error');
