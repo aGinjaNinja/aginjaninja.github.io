@@ -175,6 +175,13 @@
   .rack-layout { display: flex; gap: 20px; align-items: flex-start; }
   .device-pool { width: 220px; min-width: 220px; flex-shrink: 0; }
   .device-pool h3 { font-size: 12px; color: var(--text2); font-family: var(--mono); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; }
+  .template-panel { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .template-panel-hdr { font-size: 10px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; }
+  .template-panel-hdr:hover { color: var(--text2); }
+  .template-category { margin-bottom: 8px; }
+  .template-cat-label { font-size: 10px; color: var(--text3); font-family: var(--mono); margin-bottom: 4px; padding-left: 2px; }
+  .template-btn { width: 100%; text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: 5px; color: var(--text2); font-size: 11px; padding: 5px 8px; cursor: pointer; margin-bottom: 3px; transition: all .12s; display: block; }
+  .template-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(0,200,255,.06); }
   .pool-device {
     background: var(--card);
     border: 1px solid var(--border);
@@ -387,6 +394,20 @@
   .photo-date { font-size: 10px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
   .photo-del { position: absolute; top: 6px; right: 6px; background: rgba(255,68,85,.8); border: none; border-radius: 4px; color: #fff; cursor: pointer; width: 22px; height: 22px; font-size: 11px; display: none; align-items: center; justify-content: center; }
   .photo-card:hover .photo-del { display: flex; }
+  .photo-card:hover .photo-move-btn { display: flex !important; }
+  /* Photo folders */
+  .photo-view-wrap { display: flex; gap: 0; height: calc(100vh - 100px); }
+  .photo-folder-sidebar { width: 190px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .photo-folder-item { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .12s; position: relative; }
+  .photo-folder-item:hover { background: var(--card2); }
+  .photo-folder-item.active { background: rgba(0,200,255,.12); color: var(--accent); }
+  .photo-folder-count { margin-left: auto; font-size: 10px; color: var(--text3); font-family: var(--mono); flex-shrink: 0; }
+  .photo-folder-actions { display: flex; gap: 2px; margin-left: 2px; opacity: 0; transition: opacity .1s; }
+  .photo-folder-item:hover .photo-folder-actions { opacity: 1; }
+  .photo-folder-btn { background: none; border: none; cursor: pointer; font-size: 10px; color: var(--text3); padding: 1px 4px; border-radius: 3px; line-height: 1.4; }
+  .photo-folder-btn:hover { color: var(--text); background: rgba(255,255,255,.08); }
+  .photo-grid-area { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  .photo-folder-badge { position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,.75); color: var(--accent); font-size: 9px; font-family: var(--mono); padding: 2px 6px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; pointer-events: none; }
   /* Photo editor */
   .photo-editor-wrap { display: flex; gap: 14px; height: calc(100vh - 128px); }
   .photo-editor-canvas { flex: 1; min-width: 0; position: relative; background: #060d14; border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
@@ -650,6 +671,7 @@ function migrateProject(p) {
   if (!p.contactMgmt) p.contactMgmt = '';
   if (!p.contactIT) p.contactIT = '';
   if (!p.fcNodePositions) p.fcNodePositions = {};
+  if (!p.photoFolders) p.photoFolders = [];
   p.devices.forEach(migrateDevice);
   return p;
 }
@@ -2914,6 +2936,168 @@ function generateSampleDevices() {
   showImportReviewNamed(candidates, 'Sample Devices');
 }
 
+// ─── QUICK DEVICE TEMPLATES ───
+let _quickTpl = null;
+let _tplPanelOpen = true;
+
+const DEVICE_TEMPLATES = [
+  { category: 'Switch — Managed', icon: '⇄', items: [
+    { label: '24-port', deviceType: 'Switch', ports: 24, deviceUHeight: 1, namePlaceholder: 'SW-01' },
+    { label: '48-port', deviceType: 'Switch', ports: 48, deviceUHeight: 1, namePlaceholder: 'SW-01' },
+    { label: '8-port SFP', deviceType: 'Switch', ports: 8, deviceUHeight: 1, namePlaceholder: 'SW-01' },
+  ]},
+  { category: 'Switch — Unmanaged', icon: '⇄', items: [
+    { label: '4-port', deviceType: 'Switch', ports: 4, deviceUHeight: 1, namePlaceholder: 'USW-01' },
+    { label: '8-port', deviceType: 'Switch', ports: 8, deviceUHeight: 1, namePlaceholder: 'USW-01' },
+    { label: '16-port', deviceType: 'Switch', ports: 16, deviceUHeight: 1, namePlaceholder: 'USW-01' },
+    { label: '24-port', deviceType: 'Switch', ports: 24, deviceUHeight: 1, namePlaceholder: 'USW-01' },
+    { label: '48-port', deviceType: 'Switch', ports: 48, deviceUHeight: 1, namePlaceholder: 'USW-01' },
+  ]},
+  { category: 'Firewall', icon: '🛡', items: [
+    { label: 'Small (4-port)', deviceType: 'Firewall', ports: 4, deviceUHeight: 1, namePlaceholder: 'FW-01' },
+    { label: 'Mid (8-port)', deviceType: 'Firewall', ports: 8, deviceUHeight: 1, namePlaceholder: 'FW-01' },
+    { label: 'Enterprise (16-port)', deviceType: 'Firewall', ports: 16, deviceUHeight: 1, namePlaceholder: 'FW-01' },
+    { label: '2U Chassis', deviceType: 'Firewall', ports: 16, deviceUHeight: 2, namePlaceholder: 'FW-01' },
+  ]},
+  { category: 'Patch Panel', icon: '⊟', items: [
+    { label: 'Punchdown 24-port', isPP: true, ports: 24, ppType: 'Punchdown', namePlaceholder: 'PP-01' },
+    { label: 'Punchdown 48-port', isPP: true, ports: 48, ppType: 'Punchdown', namePlaceholder: 'PP-01' },
+    { label: 'Keystone 12-port', isPP: true, ports: 12, ppType: 'Keystone', namePlaceholder: 'PP-01' },
+    { label: 'Keystone 24-port', isPP: true, ports: 24, ppType: 'Keystone', namePlaceholder: 'PP-01' },
+    { label: 'Keystone 48-port', isPP: true, ports: 48, ppType: 'Keystone', namePlaceholder: 'PP-01' },
+  ]},
+  { category: 'Router', icon: '⇌', items: [
+    { label: 'Router 1U', deviceType: 'Router', ports: 4, deviceUHeight: 1, namePlaceholder: 'RTR-01' },
+    { label: 'Router 2U', deviceType: 'Router', ports: 8, deviceUHeight: 2, namePlaceholder: 'RTR-01' },
+  ]},
+  { category: 'UPS / Power', icon: '⚡', items: [
+    { label: 'UPS 1U', deviceType: 'APC/UPS', ports: 0, deviceUHeight: 1, namePlaceholder: 'UPS-01' },
+    { label: 'UPS 2U', deviceType: 'APC/UPS', ports: 0, deviceUHeight: 2, namePlaceholder: 'UPS-01' },
+    { label: 'UPS 3U', deviceType: 'APC/UPS', ports: 0, deviceUHeight: 3, namePlaceholder: 'UPS-01' },
+    { label: 'PDU 1U', deviceType: 'APC/UPS', ports: 0, deviceUHeight: 1, namePlaceholder: 'PDU-01', model: 'PDU' },
+  ]},
+  { category: 'Server', icon: '🖥', items: [
+    { label: 'Server 1U', deviceType: 'Server', ports: 0, deviceUHeight: 1, namePlaceholder: 'SRV-01' },
+    { label: 'Server 2U', deviceType: 'Server', ports: 0, deviceUHeight: 2, namePlaceholder: 'SRV-01' },
+    { label: 'Server 4U', deviceType: 'Server', ports: 0, deviceUHeight: 4, namePlaceholder: 'SRV-01' },
+    { label: 'Blade Chassis 7U', deviceType: 'Server', ports: 0, deviceUHeight: 7, namePlaceholder: 'BLADE-01' },
+  ]},
+  { category: 'NAS / Storage', icon: '💾', items: [
+    { label: 'NAS 1U', deviceType: 'NAS', ports: 0, deviceUHeight: 1, namePlaceholder: 'NAS-01' },
+    { label: 'NAS 2U', deviceType: 'NAS', ports: 0, deviceUHeight: 2, namePlaceholder: 'NAS-01' },
+    { label: 'NAS 4U', deviceType: 'NAS', ports: 0, deviceUHeight: 4, namePlaceholder: 'NAS-01' },
+    { label: 'SAN 2U', deviceType: 'NAS', ports: 0, deviceUHeight: 2, namePlaceholder: 'SAN-01', model: 'SAN' },
+  ]},
+  { category: 'Misc Rack-Mounted', icon: '⊙', items: [
+    { label: 'KVM Switch 8-port', deviceType: 'Misc Rack-Mounted', ports: 8, deviceUHeight: 1, namePlaceholder: 'KVM-01' },
+    { label: 'Cable Manager 1U', deviceType: 'Misc Rack-Mounted', ports: 0, deviceUHeight: 1, namePlaceholder: 'CM-01', model: 'Cable Manager' },
+    { label: 'Modem 1U', deviceType: 'Modem', ports: 4, deviceUHeight: 1, namePlaceholder: 'MDM-01' },
+    { label: 'Wireless Controller 1U', deviceType: 'Misc Rack-Mounted', ports: 0, deviceUHeight: 1, namePlaceholder: 'WLC-01' },
+    { label: 'Console Server 1U', deviceType: 'Misc Rack-Mounted', ports: 8, deviceUHeight: 1, namePlaceholder: 'CONS-01', model: 'Console Server' },
+  ]},
+];
+
+const DEVICE_TEMPLATES_FLAT = DEVICE_TEMPLATES.flatMap(cat => cat.items.map(item => ({ ...item, _cat: cat.category, _icon: cat.icon })));
+
+function buildTemplatePanel() {
+  let fi = 0;
+  const cats = DEVICE_TEMPLATES.map(cat => {
+    const btns = cat.items.map(item => {
+      const i = fi++;
+      return `<button class="template-btn" onclick="quickAddDevice(${i})">${cat.icon} ${esc(item.label)}</button>`;
+    }).join('');
+    return `<div class="template-category">
+      <div class="template-cat-label">${esc(cat.category)}</div>
+      ${btns}
+    </div>`;
+  }).join('');
+  return `<div class="template-panel">
+    <div class="template-panel-hdr" onclick="toggleTplPanel()">
+      <span>⚡ Quick Templates</span>
+      <span id="tpl-panel-arrow">${_tplPanelOpen ? '▲' : '▼'}</span>
+    </div>
+    <div id="tpl-panel-body" style="display:${_tplPanelOpen ? 'block' : 'none'}">${cats}</div>
+  </div>`;
+}
+
+function toggleTplPanel() {
+  _tplPanelOpen = !_tplPanelOpen;
+  const body = document.getElementById('tpl-panel-body');
+  const arrow = document.getElementById('tpl-panel-arrow');
+  if (body) body.style.display = _tplPanelOpen ? 'block' : 'none';
+  if (arrow) arrow.textContent = _tplPanelOpen ? '▲' : '▼';
+}
+
+function quickAddDevice(tplOrIdx) {
+  const tpl = (typeof tplOrIdx === 'number') ? DEVICE_TEMPLATES_FLAT[tplOrIdx] : tplOrIdx;
+  if (!tpl) return;
+  _quickTpl = tpl;
+  const portLine = tpl.ports ? ` · ${tpl.ports} ports` : '';
+  const uLine = tpl.deviceUHeight > 1 ? ` · ${tpl.deviceUHeight}U` : '';
+  const typeLabel = tpl.isPP ? `Patch Panel (${tpl.ppType || ''})` : tpl.deviceType;
+  openModal(`
+    <h3>Quick Add: ${esc(tpl.label)}</h3>
+    <p style="font-size:11px;color:var(--text3);margin:-4px 0 14px;font-family:var(--mono)">${esc(typeLabel)}${portLine}${uLine}</p>
+    <div class="form-row">
+      <label>Device Name *</label>
+      <input class="form-control" id="qt-name" placeholder="${esc(tpl.namePlaceholder || 'Device name')}" autofocus>
+    </div>
+    ${tpl.isPP ? '' : `<div class="form-row-inline">
+      <div class="form-row"><label>Manufacturer <span style="color:var(--text3);font-weight:400">(opt.)</span></label>
+        <input class="form-control" id="qt-mfr" placeholder="Cisco, HP, etc."></div>
+      <div class="form-row"><label>Model <span style="color:var(--text3);font-weight:400">(opt.)</span></label>
+        <input class="form-control" id="qt-model" value="${esc(tpl.model||'')}"></div>
+    </div>`}
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveQuickDevice()">Add to Pool</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('qt-name')?.focus(), 50);
+}
+
+function saveQuickDevice() {
+  const tpl = _quickTpl;
+  if (!tpl) return;
+  const name = document.getElementById('qt-name')?.value?.trim();
+  if (!name) return toast('Enter a device name', 'error');
+  const p = getProject();
+
+  let dev;
+  if (tpl.isPP) {
+    dev = {
+      id: genId(), name,
+      deviceType: 'Patch Panel',
+      type: 'non-switching',
+      ip: '', mac: '', manufacturer: '', model: tpl.ppType ? `${tpl.ppType} ${tpl.ports}p` : '',
+      notes: '', ports: tpl.ports || 24,
+      deviceUHeight: 1, rackId: null, rackU: null,
+      portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {}
+    };
+  } else {
+    const mfr = document.getElementById('qt-mfr')?.value?.trim() || '';
+    const model = document.getElementById('qt-model')?.value?.trim() || tpl.model || '';
+    dev = {
+      id: genId(), name,
+      deviceType: tpl.deviceType || 'Misc.',
+      type: tpl.deviceType === 'Switch' ? 'switching' : 'non-switching',
+      ip: '', mac: '', manufacturer: mfr, model, notes: '',
+      ports: tpl.ports || 0,
+      deviceUHeight: tpl.deviceUHeight || 1,
+      rackId: null, rackU: null,
+      portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
+      webUser: '', webPassword: '', webProtocol: 'https', parentDeviceId: ''
+    };
+  }
+
+  p.devices.push(dev);
+  logChange(`Quick-added device: ${name} (${dev.deviceType}${tpl.ports ? ', ' + tpl.ports + 'p' : ''})`);
+  save();
+  closeModal();
+  renderRacks();
+  toast(`"${name}" added to pool`, 'success');
+}
+
 // ─── RACK VIEW ───
 function renderRacks() {
   setTopbarActions(`
@@ -2936,9 +3120,7 @@ function renderRacks() {
               <div class="dtype" style="margin-top:3px">${dtBadge(d.deviceType||'Misc.')}</div>
             </div>`;
           }).join('')}
-      <div style="margin-top:12px;font-size:11px;color:var(--text3);line-height:1.5">
-        ℹ Rack-mountable types:<br>Modem, Router, Firewall, Switch,<br>Patch Panel, Server, NAS,<br>Access Control, Misc Rack-Mounted
-      </div>
+      ${buildTemplatePanel()}
     </div>
     <div class="rack-area" id="rack-area">`;
 
@@ -4437,23 +4619,65 @@ let _photoEditIdx = -1;
 let _photoDrag = null; // { slotIdx, offX, offY }
 let _photoLayoutLocked = false;
 let _photoResizeObs = null;
+let _currentPhotoFolderId = 'all'; // 'all' or a folder id
 const SLOT_COLORS = ['#4fc3f7','#81c784','#ffb74d','#f06292','#ce93d8','#80cbc4','#ffcc02','#ff8a65','#a5d6a7','#90caf9'];
 
 function renderPhotos() {
   if (_photoResizeObs) { _photoResizeObs.disconnect(); _photoResizeObs = null; }
   const p = getProject();
   if (!p.photos) p.photos = [];
+  if (!p.photoFolders) p.photoFolders = [];
   _photoEditIdx = -1;
 
+  // Validate current folder still exists
+  if (_currentPhotoFolderId !== 'all' && !p.photoFolders.find(f => f.id === _currentPhotoFolderId)) {
+    _currentPhotoFolderId = 'all';
+  }
+
   setTopbarActions(`
+    <button class="btn btn-ghost btn-sm" onclick="createPhotoFolder()">📁 New Folder</button>
     <label class="btn btn-primary btn-sm" style="cursor:pointer">
       📷 Add Photos
       <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
     </label>
   `);
 
+  // Filter photos for current view
+  const visiblePhotos = _currentPhotoFolderId === 'all'
+    ? p.photos.map((ph, idx) => ({ ph, idx }))
+    : p.photos.map((ph, idx) => ({ ph, idx })).filter(({ ph }) => ph.folderId === _currentPhotoFolderId);
+
+  // Build folder sidebar
+  const allCount = p.photos.length;
+  const unfiledCount = p.photos.filter(ph => !ph.folderId).length;
+  const folderItems = `
+    <div class="photo-folder-item ${_currentPhotoFolderId === 'all' ? 'active' : ''}" onclick="setPhotoFolder('all')">
+      <span>📷</span><span>All Photos</span><span class="photo-folder-count">${allCount}</span>
+    </div>
+    <div class="photo-folder-item ${_currentPhotoFolderId === '' ? 'active' : ''}" onclick="setPhotoFolder('')">
+      <span>📄</span><span>Unfiled</span><span class="photo-folder-count">${unfiledCount}</span>
+    </div>
+    <div style="border-top:1px solid var(--border);margin:6px 0"></div>
+    ${p.photoFolders.map(f => {
+      const cnt = p.photos.filter(ph => ph.folderId === f.id).length;
+      return `<div class="photo-folder-item ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')">
+        <span>📁</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        <span class="photo-folder-count">${cnt}</span>
+        <span class="photo-folder-actions">
+          <button class="photo-folder-btn" title="Rename" onclick="event.stopPropagation();renamePhotoFolder('${f.id}')">✎</button>
+          <button class="photo-folder-btn" title="Delete folder" onclick="event.stopPropagation();deletePhotoFolder('${f.id}')">✕</button>
+        </span>
+      </div>`;
+    }).join('')}
+    <div style="margin-top:8px">
+      <button class="btn btn-ghost btn-sm" style="width:100%;font-size:11px" onclick="createPhotoFolder()">+ New Folder</button>
+    </div>`;
+
+  // Build photo grid
+  let gridContent;
   if (p.photos.length === 0) {
-    document.getElementById('view-area').innerHTML = `
+    gridContent = `
       <div class="empty-state">
         <div class="empty-icon">📷</div>
         <h3>No photos yet</h3>
@@ -4463,23 +4687,171 @@ function renderPhotos() {
           <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
         </label>
       </div>`;
-    return;
+  } else if (visiblePhotos.length === 0) {
+    const folderName = _currentPhotoFolderId === ''
+      ? 'Unfiled'
+      : p.photoFolders.find(f => f.id === _currentPhotoFolderId)?.name || 'this folder';
+    gridContent = `
+      <div class="empty-state">
+        <div class="empty-icon">📁</div>
+        <h3>No photos in ${esc(folderName)}</h3>
+        <p>Upload photos or move existing photos into this folder.</p>
+        <label class="btn btn-primary" style="cursor:pointer;margin-top:8px">
+          Add Photos Here
+          <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
+        </label>
+      </div>`;
+  } else {
+    const grid = visiblePhotos.map(({ ph, idx }) => {
+      const assigned = (ph.assignments||[]).filter(a=>a&&a.itemId).length;
+      const folderObj = ph.folderId ? p.photoFolders.find(f => f.id === ph.folderId) : null;
+      const folderBadge = folderObj && _currentPhotoFolderId === 'all'
+        ? `<div class="photo-folder-badge">📁 ${esc(folderObj.name)}</div>` : '';
+      return `
+      <div class="photo-card" onclick="openPhotoEditor(${idx})">
+        <div class="photo-thumb" style="background-image:url('${ph.data}')"></div>
+        <div class="photo-meta">
+          <div class="photo-title">${esc(ph.caption || ph.name || 'Photo ' + (idx+1))}</div>
+          <div class="photo-date">${ph.date ? new Date(ph.date).toLocaleDateString() : ''}${assigned?` · <span style="color:var(--accent)">${assigned} tagged</span>`:''}</div>
+        </div>
+        ${folderBadge}
+        ${p.photoFolders.length > 0 ? `<button style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.65);border:1px solid var(--border2);border-radius:4px;color:var(--text2);cursor:pointer;width:22px;height:22px;font-size:11px;display:none;align-items:center;justify-content:center;" class="photo-move-btn" title="Move to folder" onclick="event.stopPropagation();movePhotoToFolder(${idx})">📁</button>` : ''}
+        <button class="photo-del" title="Delete" onclick="event.stopPropagation();deletePhoto(${idx})">✕</button>
+      </div>`;
+    }).join('');
+    gridContent = `<div class="photo-grid">${grid}</div>`;
   }
 
-  const grid = p.photos.map((ph, idx) => {
-    const assigned = (ph.assignments||[]).filter(a=>a&&a.itemId).length;
-    return `
-    <div class="photo-card" onclick="openPhotoEditor(${idx})">
-      <div class="photo-thumb" style="background-image:url('${ph.data}')"></div>
-      <div class="photo-meta">
-        <div class="photo-title">${esc(ph.caption || ph.name || 'Photo ' + (idx+1))}</div>
-        <div class="photo-date">${ph.date ? new Date(ph.date).toLocaleDateString() : ''}${assigned?` · <span style="color:var(--accent)">${assigned} tagged</span>`:''}</div>
-      </div>
-      <button class="photo-del" title="Delete" onclick="event.stopPropagation();deletePhoto(${idx})">✕</button>
+  document.getElementById('view-area').innerHTML = `
+    <div class="photo-view-wrap">
+      <div class="photo-folder-sidebar">${folderItems}</div>
+      <div class="photo-grid-area">${gridContent}</div>
     </div>`;
-  }).join('');
+}
 
-  document.getElementById('view-area').innerHTML = `<div class="photo-grid">${grid}</div>`;
+function setPhotoFolder(folderId) {
+  _currentPhotoFolderId = folderId;
+  renderPhotos();
+}
+
+function createPhotoFolder() {
+  openModal(`
+    <h3>📁 New Photo Folder</h3>
+    <div class="form-row">
+      <label>Folder Name *</label>
+      <input class="form-control" id="pf-name" placeholder="e.g. MDF Room, IDF 166, Server Room" autofocus>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePhotoFolder()">Create Folder</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('pf-name')?.focus(), 50);
+}
+
+function savePhotoFolder() {
+  const name = document.getElementById('pf-name')?.value?.trim();
+  if (!name) return toast('Enter a folder name', 'error');
+  const p = getProject();
+  if (!p.photoFolders) p.photoFolders = [];
+  const folder = { id: genId(), name };
+  p.photoFolders.push(folder);
+  logChange(`Photo folder created: "${name}"`);
+  save();
+  closeModal();
+  _currentPhotoFolderId = folder.id;
+  renderPhotos();
+  toast(`Folder "${name}" created`, 'success');
+}
+
+function renamePhotoFolder(id) {
+  const p = getProject();
+  const folder = p.photoFolders?.find(f => f.id === id);
+  if (!folder) return;
+  openModal(`
+    <h3>Rename Folder</h3>
+    <div class="form-row">
+      <label>Folder Name *</label>
+      <input class="form-control" id="pfr-name" value="${esc(folder.name)}" autofocus>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRenameFolder('${id}')">Save</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('pfr-name')?.focus(), 50);
+}
+
+function saveRenameFolder(id) {
+  const name = document.getElementById('pfr-name')?.value?.trim();
+  if (!name) return toast('Enter a folder name', 'error');
+  const p = getProject();
+  const folder = p.photoFolders?.find(f => f.id === id);
+  if (!folder) return;
+  const old = folder.name;
+  folder.name = name;
+  logChange(`Photo folder renamed: "${old}" → "${name}"`);
+  save();
+  closeModal();
+  renderPhotos();
+  toast('Folder renamed', 'success');
+}
+
+function deletePhotoFolder(id) {
+  const p = getProject();
+  const folder = p.photoFolders?.find(f => f.id === id);
+  if (!folder) return;
+  const photoCount = p.photos.filter(ph => ph.folderId === id).length;
+  const msg = photoCount > 0
+    ? `Delete folder "${folder.name}"? ${photoCount} photo${photoCount>1?'s':''} will be moved to Unfiled.`
+    : `Delete folder "${folder.name}"?`;
+  if (!confirm(msg)) return;
+  // Move photos to unfiled
+  p.photos.forEach(ph => { if (ph.folderId === id) ph.folderId = ''; });
+  p.photoFolders = p.photoFolders.filter(f => f.id !== id);
+  logChange(`Photo folder deleted: "${folder.name}"`);
+  save();
+  if (_currentPhotoFolderId === id) _currentPhotoFolderId = 'all';
+  renderPhotos();
+  toast('Folder deleted', 'success');
+}
+
+function movePhotoToFolder(idx) {
+  const p = getProject();
+  if (!p.photoFolders) p.photoFolders = [];
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const folderOpts = `
+    <option value="">— Unfiled —</option>
+    ${p.photoFolders.map(f => `<option value="${f.id}" ${ph.folderId === f.id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
+  `;
+  openModal(`
+    <h3>Move Photo to Folder</h3>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">${esc(ph.caption || ph.name || `Photo ${idx+1}`)}</div>
+    <div class="form-row">
+      <label>Folder</label>
+      <select class="form-control" id="pmf-folder">${folderOpts}</select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMovePhoto(${idx})">Move</button>
+    </div>
+  `);
+}
+
+function saveMovePhoto(idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const newFolder = document.getElementById('pmf-folder')?.value || '';
+  const oldFolderObj = ph.folderId ? p.photoFolders?.find(f => f.id === ph.folderId) : null;
+  const newFolderObj = newFolder ? p.photoFolders?.find(f => f.id === newFolder) : null;
+  ph.folderId = newFolder;
+  logChange(`Photo moved: "${ph.caption || ph.name}" → ${newFolderObj ? '"' + newFolderObj.name + '"' : 'Unfiled'}`);
+  save();
+  closeModal();
+  renderPhotos();
+  toast(`Photo moved to ${newFolderObj ? '"' + newFolderObj.name + '"' : 'Unfiled'}`, 'success');
 }
 
 function uploadPhotos(e) {
@@ -4491,7 +4863,8 @@ function uploadPhotos(e) {
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = ev => {
-      p.photos.push({ name: file.name, caption: '', data: ev.target.result, date: Date.now(), size: file.size, assignments: [] });
+      const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
+      p.photos.push({ name: file.name, caption: '', data: ev.target.result, date: Date.now(), size: file.size, assignments: [], folderId });
       logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
       done++;
       if (done === files.length) { save(); renderPhotos(); toast(`Added ${files.length} photo${files.length>1?'s':''}`, 'success'); }
@@ -4631,6 +5004,7 @@ function openPhotoEditor(idx, preservePanZoom) {
       🔄 Replace
       <input type="file" accept="image/*" style="display:none" onchange="replacePhoto(event,${idx})">
     </label>
+    <button class="btn btn-ghost btn-sm" onclick="movePhotoToFolder(${idx})" title="Move to folder">📁 Move</button>
     <button class="btn btn-danger btn-sm" onclick="deletePhoto(${idx});renderPhotos()">Delete</button>
     <button class="btn btn-primary btn-sm" onclick="savePhotoEditor(${idx})">Save</button>
   `);
