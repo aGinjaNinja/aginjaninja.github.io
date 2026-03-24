@@ -6800,8 +6800,12 @@ function fieldQuickDevice() {
       <input class="form-control" id="fqd-name" placeholder="e.g. AP-Floor2-East" style="font-size:16px;padding:12px"></div>
     <div class="form-row"><label>Type</label>
       <select class="form-control" id="fqd-type">${DTYPE_OPTS}</select></div>
-    <div class="form-row"><label>IP Address</label>
-      <input class="form-control" id="fqd-ip" placeholder="192.168.1.x" type="text" inputmode="decimal"></div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>IP Address</label>
+        <input class="form-control" id="fqd-ip" placeholder="192.168.1.x" type="text" inputmode="decimal"></div>
+      <div class="form-row"><label>MAC Address</label>
+        <input class="form-control" id="fqd-mac" placeholder="00:11:22:33:44:55"></div>
+    </div>
     <div class="form-row"><label>Status</label>
       <select class="form-control" id="fqd-status">
         <option value="">— No Status —</option>
@@ -6828,7 +6832,8 @@ function saveFieldDevice() {
     id:genId(), name, deviceType,
     type: deviceType==='Switch'?'switching':'non-switching',
     ip: document.getElementById('fqd-ip')?.value?.trim()||'',
-    mac:'', manufacturer:'', model:'', ports:0,
+    mac: document.getElementById('fqd-mac')?.value?.trim()||'',
+    manufacturer:'', model:'', ports:0,
     notes: document.getElementById('fqd-notes')?.value?.trim()||'',
     parentDeviceId:null, webUser:'', webPassword:'', webProtocol:'https',
     deviceUHeight:1, status: document.getElementById('fqd-status')?.value||'',
