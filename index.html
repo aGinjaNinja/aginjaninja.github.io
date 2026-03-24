@@ -464,6 +464,47 @@
 
   /* ─── PORT CONNECTION BADGE ─── */
   .port-conn-badge { font-size: 10px; font-family: var(--mono); color: var(--accent); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ─── STATUS BADGES (Feature 1) ─── */
+  .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+  .status-dot-rack { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; position: absolute; top: 3px; right: 3px; z-index: 4; border: 1px solid rgba(0,0,0,.4); }
+  /* ─── ASSET DETAILS COLLAPSIBLE ─── */
+  .asset-section { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 12px; }
+  .asset-section-hdr { display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; background: var(--panel); cursor: pointer; user-select: none; font-size: 12px; color: var(--text2); font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; }
+  .asset-section-hdr:hover { color: var(--text); }
+  .asset-section-body { padding: 14px; display: none; }
+  .asset-section-body.open { display: block; }
+  /* ─── CHECKLIST ─── */
+  .checklist-group { margin-bottom: 20px; }
+  .checklist-group-hdr { font-size: 11px; color: var(--text2); font-family: var(--mono); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .checklist-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 5px; margin-bottom: 5px; transition: all .14s; }
+  .checklist-item:hover { border-color: var(--border2); }
+  .checklist-item.done { opacity: .55; }
+  .checklist-item label { flex: 1; cursor: pointer; font-size: 13px; }
+  .checklist-item.done label { text-decoration: line-through; color: var(--text2); }
+  .progress-bar-wrap { height: 8px; background: var(--panel); border-radius: 4px; overflow: hidden; margin-bottom: 16px; border: 1px solid var(--border); }
+  .progress-bar-fill { height: 100%; background: var(--green); border-radius: 4px; transition: width .3s; }
+  /* ─── VENDOR TABLE ─── */
+  .vendor-table-wrap { overflow-x: auto; }
+  /* ─── TIME LOG ─── */
+  .timer-running { animation: pulse-timer 1s infinite; }
+  @keyframes pulse-timer { 0%,100% { opacity:1; } 50% { opacity:.6; } }
+  /* ─── FIELD MODE ─── */
+  .field-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: var(--card); border: 2px solid var(--border); border-radius: 12px; padding: 24px 16px; cursor: pointer; transition: all .18s; min-height: 100px; flex: 1; }
+  .field-btn:hover { border-color: var(--accent); background: var(--card2); transform: translateY(-2px); }
+  .field-btn .fbi { font-size: 32px; }
+  .field-btn .fbl { font-size: 13px; font-weight: 600; color: var(--text); }
+  /* ─── CABLE RUNS ─── */
+  .cable-type-badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-family: var(--mono); background: var(--card2); border: 1px solid var(--border2); color: var(--text2); }
+  /* ─── SITE MAP ─── */
+  .sitemap-canvas { position: relative; overflow: hidden; background: #060d14; border: 1px solid var(--border); border-radius: 8px; touch-action: none; }
+  .sitemap-marker { position: absolute; transform: translate(-50%, -100%); cursor: pointer; z-index: 10; display: flex; flex-direction: column; align-items: center; }
+  .sitemap-pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .sitemap-label { font-size: 10px; font-family: var(--mono); background: rgba(0,0,0,.75); color: #fff; padding: 1px 5px; border-radius: 3px; margin-bottom: 2px; white-space: nowrap; }
+  /* ─── AMBER TOAST ─── */
+  #toast.warning { border-color: var(--amber); color: var(--amber); }
+  /* ─── TIMER TOPBAR ─── */
+  #active-timer-display { font-family: var(--mono); font-size: 12px; color: var(--amber); background: rgba(255,170,0,.1); border: 1px solid rgba(255,170,0,.3); border-radius: 5px; padding: 3px 10px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -531,6 +572,19 @@
       <div class="nav-section">Workspace</div>
       <div class="nav-item" onclick="setView('flowchart')" data-view="flowchart">
         <span class="nav-icon">⬡</span> Flowchart
+      </div>
+      <div class="nav-section">Field</div>
+      <div class="nav-item" onclick="setView('checklist')" data-view="checklist">
+        <span class="nav-icon">✓</span> <span id="nav-checklist-label">Checklist</span>
+      </div>
+      <div class="nav-item" onclick="setView('cableruns')" data-view="cableruns">
+        <span class="nav-icon">⇄</span> Cable Runs
+      </div>
+      <div class="nav-item" onclick="setView('fieldmode')" data-view="fieldmode">
+        <span class="nav-icon">📱</span> Field Mode
+      </div>
+      <div class="nav-item" onclick="setView('sitemap')" data-view="sitemap">
+        <span class="nav-icon">🗺</span> Site Map
       </div>
       <div class="nav-section">System</div>
       <div class="nav-item" onclick="setView('photos')" data-view="photos">
@@ -626,6 +680,17 @@ function dtBadge(deviceType) {
   return `<span class="dt-badge" style="background:${bg};border-color:${c}40;color:${c}"><span class="dt-dot" style="background:${c}"></span>${esc(deviceType||'Misc.')}</span>`;
 }
 
+const STATUS_COLORS = { verified:'#00e87a', 'needs-label':'#ffaa00', 'needs-attention':'#ff4455', unknown:'#778899', decommission:'#445566' };
+const STATUS_LABELS = { verified:'Verified', 'needs-label':'Needs Label', 'needs-attention':'Needs Attention', unknown:'Unknown', decommission:'Decommission' };
+
+function statusBadge(status) {
+  if (!status) return '';
+  const c = STATUS_COLORS[status] || '#778899';
+  const lbl = STATUS_LABELS[status] || status;
+  const extraStyle = status === 'decommission' ? 'text-decoration:line-through;' : '';
+  return `<span class="status-badge" style="background:${c}18;border:1px solid ${c}44;color:${c};${extraStyle}">${esc(lbl)}</span>`;
+}
+
 // Migrate old type field to new deviceType
 function migrateDevice(d) {
   if (!d.deviceType) {
@@ -642,6 +707,12 @@ function migrateDevice(d) {
   if (!d.webPassword) d.webPassword = '';
   if (!d.webProtocol) d.webProtocol = 'https';
   if (!d.deviceUHeight) d.deviceUHeight = 1;
+  // Feature 1: Status
+  if (d.status === undefined) d.status = '';
+  // Feature 2: Serial / Warranty / EOL
+  if (d.serial === undefined) d.serial = '';
+  if (d.warrantyExpiry === undefined) d.warrantyExpiry = '';
+  if (d.eolDate === undefined) d.eolDate = '';
   return d;
 }
 
@@ -657,7 +728,11 @@ let state = {
   selectedSwitch: null,
   fcSelectedNode: null,
   typeColors: {},
-  searchDebounce: null
+  searchDebounce: null,
+  activeTimer: null,
+  deviceStatusFilter: 'all',
+  cableTypeFilter: 'all',
+  cableRoomFilter: ''
 };
 
 function migrateProject(p) {
@@ -672,8 +747,44 @@ function migrateProject(p) {
   if (!p.contactIT) p.contactIT = '';
   if (!p.fcNodePositions) p.fcNodePositions = {};
   if (!p.photoFolders) p.photoFolders = [];
+  // Feature 5: Vendors
+  if (!p.vendors) p.vendors = [];
+  // Feature 6: Checklist
+  if (!p.checklist) p.checklist = getDefaultChecklist();
+  // Feature 7: Time Log
+  if (!p.timeLog) p.timeLog = [];
+  // Feature 11: Cable Runs
+  if (!p.cableRuns) p.cableRuns = [];
+  // Feature 12: Locations
+  if (!p.locations) p.locations = [];
+  // Feature 13: Site Map
+  if (!p.siteMap) p.siteMap = { data: null, markers: [] };
   p.devices.forEach(migrateDevice);
   return p;
+}
+
+function getDefaultChecklist() {
+  const items = [
+    { cat:'Discovery', text:'Photograph all network closets' },
+    { cat:'Discovery', text:'Document ISP hand-off point' },
+    { cat:'Discovery', text:'Scan all subnets' },
+    { cat:'Discovery', text:'Walk all floors/areas' },
+    { cat:'Discovery', text:'Locate all patch panels' },
+    { cat:'Inventory', text:'Document all switches with port counts' },
+    { cat:'Inventory', text:'Document all routers/firewalls' },
+    { cat:'Inventory', text:'Document all servers/NAS' },
+    { cat:'Inventory', text:'Document all APs' },
+    { cat:'Inventory', text:'Record all serial numbers' },
+    { cat:'Cabling', text:'Label all patch panel ports' },
+    { cat:'Cabling', text:'Document cable runs between closets' },
+    { cat:'Cabling', text:'Verify all punch-downs are labeled' },
+    { cat:'Cabling', text:'Photograph cable management' },
+    { cat:'Verification', text:'Verify all IPs are documented' },
+    { cat:'Verification', text:'Test internet connectivity' },
+    { cat:'Verification', text:'Confirm VLAN config matches documentation' },
+    { cat:'Verification', text:'Sign off with site contact' },
+  ];
+  return items.map(i => ({ id: genId(), text: i.text, done: false, category: i.cat }));
 }
 
 function logChange(msg) {
@@ -1095,7 +1206,9 @@ function createProject() {
     created: new Date().toLocaleDateString(),
     devices: [], racks: [], changelog: [], siteNotes: [],
     flowchart: JSON.parse(JSON.stringify(DEFAULT_FLOWCHART)),
-    fcNodePositions: {}
+    fcNodePositions: {},
+    vendors: [], checklist: getDefaultChecklist(), timeLog: [],
+    cableRuns: [], locations: [], siteMap: { data: null, markers: [] }
   };
   state.projects.push(p);
   save();
@@ -1536,16 +1649,30 @@ function setView(v) {
   const va = document.getElementById('view-area');
   if (va) va.style.zoom = 1;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.view === v));
-  const titles = { dashboard:'Dashboard', devices:'Device List', scan:'Network Scan', racks:'Rack View', ports:'Port Assignment', flowchart:'Network Topology', photos:'Site Photos', settings:'Settings', log:'Change Log' };
+  const titles = { dashboard:'Dashboard', devices:'Device List', scan:'Network Scan', racks:'Rack View', ports:'Port Assignment', flowchart:'Network Topology', photos:'Site Photos', settings:'Settings', log:'Change Log', checklist:'Site Survey Checklist', cableruns:'Cable Runs', fieldmode:'Field Mode', sitemap:'Site Map' };
   document.getElementById('view-title').textContent = titles[v] || v;
-  const views = { dashboard: renderDashboard, devices: renderDevices, scan: renderScan, racks: renderRacks, ports: renderPorts, flowchart: renderFlowchart, photos: renderPhotos, settings: renderSettings, log: renderLog };
+  const views = { dashboard: renderDashboard, devices: renderDevices, scan: renderScan, racks: renderRacks, ports: renderPorts, flowchart: renderFlowchart, photos: renderPhotos, settings: renderSettings, log: renderLog, checklist: renderChecklist, cableruns: renderCableRuns, fieldmode: renderFieldMode, sitemap: renderSiteMap };
   if (views[v]) views[v]();
+}
+
+function updateChecklistNavBadge() {
+  const p = getProject();
+  if (!p) return;
+  const cl = p.checklist || [];
+  const done = cl.filter(i => i.done).length;
+  const total = cl.length;
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  const el = document.getElementById('nav-checklist-label');
+  if (el) el.innerHTML = `Checklist <span style="font-size:10px;color:${pct===100?'var(--green)':'var(--amber)'};background:${pct===100?'rgba(0,232,122,.12)':'rgba(255,170,0,.12)'};border:1px solid ${pct===100?'rgba(0,232,122,.3)':'rgba(255,170,0,.3)'};border-radius:8px;padding:0 5px;font-family:var(--mono)">${pct}%</span>`;
 }
 
 // ─── DASHBOARD ───
 function renderDashboard() {
-  setTopbarActions('');
+  setTopbarActions(`
+    <button class="btn btn-ghost btn-sm" onclick="printSiteReport()">🖨 Print Report</button>
+  `);
   const p = getProject();
+  updateChecklistNavBadge();
   const switches = p.devices.filter(d => d.deviceType === 'Switch');
   const rackMounted = p.devices.filter(d => d.rackId);
   const totalPorts = p.devices.reduce((a, s) => a + (parseInt(s.ports) || 0), 0);
@@ -1553,6 +1680,26 @@ function renderDashboard() {
   const typeCounts = {};
   p.devices.forEach(d => { typeCounts[d.deviceType||'Misc.'] = (typeCounts[d.deviceType||'Misc.']||0)+1; });
   const recentDevs = p.devices.slice(-10).reverse();
+
+  // EOL Alert
+  const now = new Date(); const in90 = new Date(now); in90.setDate(in90.getDate()+90);
+  const eolDevs = p.devices.filter(d => d.eolDate && new Date(d.eolDate) <= in90);
+  // Checklist progress
+  const cl = p.checklist||[];
+  const clDone = cl.filter(i=>i.done).length;
+  const clPct = cl.length>0 ? Math.round(clDone/cl.length*100) : 0;
+  // Vendors
+  const vendors = p.vendors||[];
+  // Time log
+  const timeLog = p.timeLog||[];
+  const totalMins = timeLog.reduce((s,e)=>{
+    if(!e.startTime||!e.endTime) return s;
+    const [sh,sm]=(e.startTime||'00:00').split(':').map(Number);
+    const [eh,em]=(e.endTime||'00:00').split(':').map(Number);
+    return s + Math.max(0,(eh*60+em)-(sh*60+sm));
+  },0);
+  const totalHrs = (totalMins/60).toFixed(1);
+  const activeTimer = state.activeTimer;
 
   document.getElementById('view-area').innerHTML = `
     <div style="display:flex;gap:20px;height:calc(100vh - 130px)">
@@ -1564,7 +1711,25 @@ function renderDashboard() {
           <div class="stat-card"><div class="sv green">${p.racks.length}</div><div class="sl">Racks</div></div>
           <div class="stat-card"><div class="sv">${rackMounted.length}</div><div class="sl">Rack-Assigned</div></div>
           <div class="stat-card"><div class="sv">${totalPorts > 0 ? assignedPorts+'/'+totalPorts : '—'}</div><div class="sl">Ports Used</div></div>
+          <div class="stat-card" onclick="setView('checklist')" style="cursor:pointer" title="Go to Checklist"><div class="sv ${clPct===100?'green':'amber'}">${clPct}%</div><div class="sl">Checklist</div></div>
         </div>
+
+        ${eolDevs.length > 0 ? `
+        <div style="background:#ff445518;border:1px solid #ff445544;border-radius:7px;padding:12px 16px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-size:16px">⚠</span>
+            <div style="font-size:13px;font-weight:600;color:var(--red)">EOL Alert — ${eolDevs.length} device${eolDevs.length!==1?'s':''} at/near end of life</div>
+          </div>
+          ${eolDevs.slice(0,5).map(d=>{
+            const eol=new Date(d.eolDate); const past=eol<now;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer" onclick="editDevice('${d.id}')">
+              <span style="color:${past?'var(--red)':'var(--amber)'}">${past?'⚠ PAST EOL':'⏱ EOL soon'}</span>
+              <span style="font-weight:600">${esc(d.name)}</span>
+              <span style="color:var(--text3);font-family:var(--mono)">${esc(d.eolDate)}</span>
+            </div>`;
+          }).join('')}
+          ${eolDevs.length>5?`<div style="font-size:11px;color:var(--text3);margin-top:4px">+${eolDevs.length-5} more</div>`:''}
+        </div>` : ''}
 
         ${p.company||p.location||p.contactMgmt||p.contactIT ? `
         <div style="background:var(--card);border:1px solid var(--border);border-radius:7px;padding:12px 16px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px 24px">
@@ -1621,6 +1786,78 @@ function renderDashboard() {
               }).join('')}
           </div>
         </div>
+
+        <!-- Vendors & Contracts -->
+        <div style="margin-top:20px;background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <div style="padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+            <div style="font-size:13px;font-weight:600">📋 Vendors &amp; Contracts</div>
+            <button class="btn btn-primary btn-sm" onclick="addVendor()">+ Add Vendor</button>
+          </div>
+          ${vendors.length===0 ? `<div style="padding:16px;color:var(--text3);font-size:12px">No vendors yet.</div>` : `
+          <div class="vendor-table-wrap">
+            <table style="font-size:12px">
+              <thead><tr>
+                <th>Type</th><th>Name</th><th>Account #</th><th>Circuit ID</th><th>Support Contact</th><th></th>
+              </tr></thead>
+              <tbody>
+                ${vendors.map(v=>`<tr>
+                  <td><span style="background:var(--card2);border:1px solid var(--border2);border-radius:3px;padding:1px 6px;font-size:10px;font-family:var(--mono)">${esc(v.type||'')}</span></td>
+                  <td style="font-weight:600">${esc(v.name||'')}</td>
+                  <td class="mono">${esc(v.accountNum||'—')}</td>
+                  <td class="mono">${esc(v.circuitId||'—')}</td>
+                  <td>${esc(v.supportPhone||'')}${v.supportPhone&&v.supportEmail?' / ':''}${esc(v.supportEmail||'')}</td>
+                  <td><div class="td-actions">
+                    <button class="btn btn-ghost btn-sm btn-icon" onclick="editVendor('${v.id}')">✎</button>
+                    <button class="btn btn-danger btn-sm btn-icon" onclick="deleteVendor('${v.id}')">✕</button>
+                  </div></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`}
+        </div>
+
+        <!-- Time Log -->
+        <div style="margin-top:20px;background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+          <div style="padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-size:13px;font-weight:600">⏱ Time Log</div>
+              <span style="font-size:11px;color:var(--text2);font-family:var(--mono)">${totalHrs} hrs total</span>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${activeTimer ? `<button class="btn btn-sm" style="background:rgba(255,170,0,.15);border-color:rgba(255,170,0,.4);color:var(--amber)" onclick="stopTimer()">⏹ Stop Timer</button>` : `<button class="btn btn-ghost btn-sm" onclick="startTimer()">▶ Start Timer</button>`}
+              <button class="btn btn-ghost btn-sm" onclick="addTimeEntry()">+ Add Entry</button>
+            </div>
+          </div>
+          ${timeLog.length===0&&!activeTimer ? `<div style="padding:16px;color:var(--text3);font-size:12px">No time entries yet.</div>` : `
+          <table style="font-size:12px">
+            <thead><tr><th>Date</th><th>Tech</th><th>Duration</th><th>Notes</th><th></th></tr></thead>
+            <tbody>
+              ${activeTimer?`<tr style="background:rgba(255,170,0,.05)">
+                <td class="mono">${activeTimer.date}</td>
+                <td>${esc(activeTimer.tech||'')}</td>
+                <td><span class="timer-running" style="color:var(--amber)" id="timer-elapsed">Running...</span></td>
+                <td style="color:var(--text3)">In progress</td>
+                <td></td>
+              </tr>`:''}
+              ${timeLog.slice().reverse().slice(0,8).map(e=>{
+                const [sh,sm]=(e.startTime||'00:00').split(':').map(Number);
+                const [eh,em]=(e.endTime||'00:00').split(':').map(Number);
+                const mins=Math.max(0,(eh*60+em)-(sh*60+sm));
+                const dur=mins>=60?`${Math.floor(mins/60)}h ${mins%60}m`:`${mins}m`;
+                return `<tr>
+                  <td class="mono">${esc(e.date||'')}</td>
+                  <td>${esc(e.tech||'')}</td>
+                  <td class="mono">${dur}</td>
+                  <td style="color:var(--text2)">${esc(e.notes||'')}</td>
+                  <td><div class="td-actions">
+                    <button class="btn btn-ghost btn-sm btn-icon" onclick="editTimeEntry('${e.id}')">✎</button>
+                    <button class="btn btn-danger btn-sm btn-icon" onclick="deleteTimeEntry('${e.id}')">✕</button>
+                  </div></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>`}
+        </div>
       </div>
 
       <!-- Right column: Site Notes -->
@@ -1646,6 +1883,8 @@ function renderDashboard() {
         </div>
       </div>
     </div>`;
+  // Start elapsed timer display if active
+  if (activeTimer) updateTimerDisplay();
 }
 
 function viewRackFromDash(rackId) {
@@ -1730,9 +1969,11 @@ function renderDevices(preserveSearch) {
   const allNonPP = p.devices.filter(d => d.deviceType !== 'Patch Panel');
   const allPP    = p.devices.filter(d => d.deviceType === 'Patch Panel');
 
+  const statusFilter = state.deviceStatusFilter || 'all';
   let devs = allNonPP.filter(d => {
     if (filter !== 'all' && d.deviceType !== filter) return false;
-    if (search && !d.name.toLowerCase().includes(search) && !(d.ip||'').includes(search) && !(d.model||'').toLowerCase().includes(search) && !(d.mac||'').toLowerCase().includes(search) && !(d.deviceType||'').toLowerCase().includes(search)) return false;
+    if (statusFilter !== 'all' && (d.status||'') !== statusFilter) return false;
+    if (search && !d.name.toLowerCase().includes(search) && !(d.ip||'').includes(search) && !(d.model||'').toLowerCase().includes(search) && !(d.mac||'').toLowerCase().includes(search) && !(d.deviceType||'').toLowerCase().includes(search) && !(d.serial||'').toLowerCase().includes(search)) return false;
     return true;
   });
 
@@ -1772,13 +2013,23 @@ function renderDevices(preserveSearch) {
   // Filter tabs: only non-patch-panel types
   const typeCounts = {};
   allNonPP.forEach(d => { typeCounts[d.deviceType||'Misc.'] = (typeCounts[d.deviceType||'Misc.']||0)+1; });
+  const statusCounts = {};
+  allNonPP.forEach(d => { if (d.status) statusCounts[d.status] = (statusCounts[d.status]||0)+1; });
+  const hasSerial = allNonPP.some(d => d.serial);
   const filterTabsHtml = `
     <div class="filter-tabs" style="flex-wrap:wrap;gap:4px">
       <div class="filter-tab ${filter==='all'?'active':''}" onclick="state.deviceFilter='all';renderDevices()">All (${allNonPP.length})</div>
       ${DEVICE_TYPES.filter(t => t !== 'Patch Panel' && typeCounts[t]).map(t =>
         `<div class="filter-tab ${filter===t?'active':''}" onclick="state.deviceFilter='${t.replace(/'/g,"\\'")}';renderDevices()" style="${filter===t?'border-color:'+dtColor(t)+';color:'+dtColor(t):''}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dtColor(t)};margin-right:4px;vertical-align:middle"></span>${esc(t)} (${typeCounts[t]})</div>`
       ).join('')}
-    </div>`;
+    </div>
+    ${Object.keys(statusCounts).length > 0 ? `<div class="filter-tabs" style="flex-wrap:wrap;gap:4px;margin-top:4px">
+      <div class="filter-tab ${statusFilter==='all'?'active':''}" onclick="state.deviceStatusFilter='all';renderDevices()" style="font-size:11px">Status: All</div>
+      ${Object.entries(statusCounts).map(([s,cnt]) => {
+        const c = STATUS_COLORS[s]||'#778899';
+        return `<div class="filter-tab ${statusFilter===s?'active':''}" onclick="state.deviceStatusFilter='${s}';renderDevices()" style="${statusFilter===s?'border-color:'+c+';color:'+c:''};font-size:11px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${c};margin-right:3px;vertical-align:middle"></span>${esc(STATUS_LABELS[s]||s)} (${cnt})</div>`;
+      }).join('')}
+    </div>` : ''}`;
 
   const bulkBar = selCount > 0 ? `
     <div class="bulk-bar">
@@ -1787,6 +2038,7 @@ function renderDevices(preserveSearch) {
       <button class="btn btn-ghost btn-sm" onclick="bulkAssignSwitch()">⊞ Assign to Switch</button>
       <button class="btn btn-ghost btn-sm" onclick="bulkChangeType()">⇄ Change Type</button>
       <button class="btn btn-ghost btn-sm" onclick="bulkCopyTable()">⎘ Copy Table</button>
+      <button class="btn btn-ghost btn-sm" onclick="bulkClone()">⎘ Clone</button>
       <button class="btn btn-danger btn-sm" onclick="bulkDelete()">✕ Delete Selected</button>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="state.selectedDeviceIds=new Set();renderDevices()">✕ Clear</button>
     </div>` : '';
@@ -1870,9 +2122,11 @@ function renderDevices(preserveSearch) {
           <th class="th-check"><input type="checkbox" title="Select all" ${allChecked?'checked':''} onchange="bulkToggleAll(this.checked)"></th>
           ${thSort('Name','name')}
           ${thSort('Device Type','type')}
+          <th>Status</th>
           ${thSort('IP Address','ip')}
           ${thSort('MAC Address','mac')}
           ${thSort('Manufacturer / Model','mfr')}
+          ${hasSerial?'<th>Serial</th>':''}
           ${thSort('Ports','ports')}
           ${thSort('Rack','rack')}
           <th style="font-size:11px;color:${dtColor('Patch Panel')}">⊟ Patch</th>
@@ -1888,9 +2142,11 @@ function renderDevices(preserveSearch) {
               <td class="td-check"><input type="checkbox" ${sel?'checked':''} onchange="bulkToggleOne('${d.id}',this.checked)"></td>
               <td style="font-weight:600">${esc(d.name)}</td>
               <td>${dtBadge(d.deviceType||'Misc.')}</td>
+              <td>${statusBadge(d.status||'')}</td>
               <td><span class="mono">${esc(d.ip||'—')}</span></td>
               <td><span class="mono">${esc(d.mac||'—')}</span></td>
               <td>${esc(d.manufacturer||'')} ${esc(d.model||'')}</td>
+              ${hasSerial?`<td><span class="mono" style="font-size:11px">${esc(d.serial||'—')}</span></td>`:''}
               <td>${(d.ports||0)>0?(d.ports):'—'}</td>
               <td>${rack?`<span class="badge badge-green">${esc(rack.name)}</span>`:'<span class="badge badge-gray">Unassigned</span>'}</td>
               <td>${patch ? `<span class="mono" style="font-size:11px;color:${c};background:${c}18;border:1px solid ${c}33;border-radius:3px;padding:1px 5px;white-space:nowrap">${esc(patch)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
@@ -1986,6 +2242,7 @@ function _syncBulkBar() {
       <button class="btn btn-ghost btn-sm" onclick="bulkAssignSwitch()">⊞ Assign to Switch</button>
       <button class="btn btn-ghost btn-sm" onclick="bulkChangeType()">⇄ Change Type</button>
       <button class="btn btn-ghost btn-sm" onclick="bulkCopyTable()">⎘ Copy Table</button>
+      <button class="btn btn-ghost btn-sm" onclick="bulkClone()">⎘ Clone</button>
       <button class="btn btn-danger btn-sm" onclick="bulkDelete()">✕ Delete Selected</button>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="state.selectedDeviceIds=new Set();renderDevices()">✕ Clear</button>
     </div>`;
@@ -2369,6 +2626,15 @@ function openDeviceModal(id) {
   const parentables = p.devices.filter(x => x.id !== id && (x.deviceType === 'Switch' || x.deviceType === 'AP' || PORT_CAPABLE.has(x.deviceType||'')));
   const parentOpts = `<option value="">— None —</option>` +
     parentables.map(x => `<option value="${x.id}" ${d?.parentDeviceId===x.id?'selected':''}>${esc(x.name)} (${esc(x.deviceType||'Misc.')})</option>`).join('');
+  const statusOpts = [
+    { v:'', label:'— No Status —', color:'var(--text2)' },
+    { v:'verified', label:'✓ Verified', color:'#00e87a' },
+    { v:'needs-label', label:'⚠ Needs Label', color:'#ffaa00' },
+    { v:'needs-attention', label:'⚠ Needs Attention', color:'#ff4455' },
+    { v:'unknown', label:'? Unknown', color:'#778899' },
+    { v:'decommission', label:'✕ Decommission', color:'#445566' },
+  ];
+  const statusOptHtml = statusOpts.map(s => `<option value="${s.v}" ${(d?.status||'')=== s.v?'selected':''}>${s.label}</option>`).join('');
   openModal(`
     <h3>${isNew ? 'Add Device' : 'Edit Device'}</h3>
     <div class="form-row-inline">
@@ -2391,6 +2657,9 @@ function openDeviceModal(id) {
       <div class="form-row"><label>Model</label>
         <input class="form-control" id="d-model" value="${esc(d?.model||'')}" placeholder="Catalyst 9200"></div>
     </div>
+    <div class="form-row"><label>Status / Condition</label>
+      <select class="form-control" id="d-status">${statusOptHtml}</select>
+    </div>
     <div class="form-row" id="ports-field" style="${showPorts?'':'display:none'}">
       <label>Number of Ports</label>
       <input class="form-control" id="d-ports" type="number" min="1" max="512" value="${d?.ports||24}" placeholder="24">
@@ -2404,6 +2673,23 @@ function openDeviceModal(id) {
     </div>
     <div class="form-row"><label>Notes</label>
       <textarea class="form-control" id="d-notes" placeholder="Optional notes" rows="3" style="resize:vertical;font-family:inherit">${esc(d?.notes||'')}</textarea></div>
+
+    <div class="asset-section">
+      <div class="asset-section-hdr" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.asset-arr').textContent=this.nextElementSibling.classList.contains('open')?'▲':'▼'">
+        Asset Details <span class="asset-arr">▼</span>
+      </div>
+      <div class="asset-section-body">
+        <div class="form-row"><label>Serial Number</label>
+          <input class="form-control" id="d-serial" value="${esc(d?.serial||'')}" placeholder="SN-XXXXXXXX"></div>
+        <div class="form-row-inline">
+          <div class="form-row"><label>Warranty Expiry</label>
+            <input class="form-control" type="date" id="d-warranty" value="${esc(d?.warrantyExpiry||'')}"></div>
+          <div class="form-row"><label>EOL / End of Life Date</label>
+            <input class="form-control" type="date" id="d-eol" value="${esc(d?.eolDate||'')}"></div>
+        </div>
+      </div>
+    </div>
+
     <div style="border-top:1px solid var(--border);margin:14px 0 10px;padding-top:12px">
       <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Web Management Access</div>
       <div class="form-row-inline">
@@ -2424,6 +2710,7 @@ function openDeviceModal(id) {
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${!isNew ? `<button class="btn btn-ghost" onclick="cloneDevice('${id}')">⎘ Clone</button>` : ''}
       <button class="btn btn-primary" onclick="saveDevice('${id||''}')">Save</button>
     </div>
   `);
@@ -2609,11 +2896,22 @@ function saveDevice(id) {
   const webPassword = document.getElementById('d-webpass')?.value || '';
   const webProtocol = document.getElementById('d-webproto')?.value || 'https';
   const deviceUHeight = RACK_MOUNTABLE.has(deviceType) ? (parseInt(document.getElementById('d-uheight')?.value) || 1) : 1;
+  const ipVal = document.getElementById('d-ip')?.value?.trim() || '';
+  const macVal = document.getElementById('d-mac')?.value?.trim() || '';
+  // Feature 4: Duplicate detection (warn but don't block)
+  if (ipVal) {
+    const ipConflict = p.devices.find(d => d.id !== id && d.ip === ipVal);
+    if (ipConflict) toast(`Warning: IP ${ipVal} is already used by ${ipConflict.name}`, 'warning');
+  }
+  if (macVal) {
+    const macConflict = p.devices.find(d => d.id !== id && d.mac && d.mac.toLowerCase() === macVal.toLowerCase());
+    if (macConflict) toast(`Warning: MAC ${macVal} is already used by ${macConflict.name}`, 'warning');
+  }
   const data = {
     name, deviceType,
     type: deviceType === 'Switch' ? 'switching' : 'non-switching',
-    ip: document.getElementById('d-ip')?.value?.trim() || '',
-    mac: document.getElementById('d-mac')?.value?.trim() || '',
+    ip: ipVal,
+    mac: macVal,
     manufacturer: document.getElementById('d-mfr')?.value?.trim() || '',
     model: document.getElementById('d-model')?.value?.trim() || '',
     ports: hasPorts ? parseInt(document.getElementById('d-ports')?.value) || 24 : 0,
@@ -2621,6 +2919,10 @@ function saveDevice(id) {
     parentDeviceId: parentDeviceId || null,
     webUser, webPassword, webProtocol,
     deviceUHeight,
+    status: document.getElementById('d-status')?.value || '',
+    serial: document.getElementById('d-serial')?.value?.trim() || '',
+    warrantyExpiry: document.getElementById('d-warranty')?.value || '',
+    eolDate: document.getElementById('d-eol')?.value || '',
   };
   if (id) {
     const idx = p.devices.findIndex(d => d.id === id);
@@ -2649,7 +2951,7 @@ function saveDevice(id) {
       logChange(`Device updated: ${name}${changes.length ? ' — ' + changes.join('; ') : ''}`);
     }
   } else {
-    const newDev = { id: genId(), ...data, rackId: null, rackU: null, portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {} };
+    const newDev = { id: genId(), ...data, rackId: null, rackU: null, portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {}, addedDate: new Date().toISOString() };
     p.devices.push(newDev);
     const credStr = data.webUser ? ` web:${data.webProtocol}://${data.webUser}:${data.webPassword}@${data.ip||'?'}` : '';
     logChange(`Device added: ${name} (${deviceType})${data.ip?' IP:'+data.ip:''}${data.mac?' MAC:'+data.mac:''}${credStr}`);
@@ -2683,6 +2985,66 @@ function deleteDevice(id) {
     });
   });
   save(); renderDevices(); toast('Device deleted');
+}
+
+// ─── DEVICE CLONING (Feature 3) ───
+function cloneDevice(id) {
+  const p = getProject();
+  const orig = p.devices.find(d => d.id === id);
+  if (!orig) return;
+  const clone = JSON.parse(JSON.stringify(orig));
+  clone.id = genId();
+  clone.name = orig.name + ' (copy)';
+  clone.rackId = null;
+  clone.rackU = null;
+  clone.serial = '';
+  clone.ip = '';
+  clone.mac = '';
+  clone.addedDate = new Date().toISOString();
+  // Clear port assignments on the clone
+  clone.portAssignments = {};
+  clone.portNotes = {};
+  clone.portVlans = {};
+  clone.portPeerPort = {};
+  clone.portPoe = {};
+  clone.portLabels = {};
+  p.devices.push(clone);
+  logChange(`Device cloned: ${orig.name} → ${clone.name}`);
+  save();
+  closeModal();
+  editDevice(clone.id);
+  toast('Device cloned — edit and save', 'success');
+}
+
+function bulkClone() {
+  const p = getProject();
+  const ids = [...state.selectedDeviceIds];
+  if (ids.length === 0) return;
+  ids.forEach(id => {
+    const orig = p.devices.find(d => d.id === id);
+    if (!orig) return;
+    const clone = JSON.parse(JSON.stringify(orig));
+    clone.id = genId();
+    clone.name = orig.name + ' (copy)';
+    clone.rackId = null;
+    clone.rackU = null;
+    clone.serial = '';
+    clone.ip = '';
+    clone.mac = '';
+    clone.addedDate = new Date().toISOString();
+    clone.portAssignments = {};
+    clone.portNotes = {};
+    clone.portVlans = {};
+    clone.portPeerPort = {};
+    clone.portPoe = {};
+    clone.portLabels = {};
+    p.devices.push(clone);
+    logChange(`Device cloned: ${orig.name} → ${clone.name}`);
+  });
+  state.selectedDeviceIds = new Set();
+  save();
+  renderDevices();
+  toast(`${ids.length} device${ids.length!==1?'s':''} cloned`, 'success');
 }
 
 // ─── NETWORK SCAN ───
@@ -3308,6 +3670,7 @@ function buildRackHTML(rack, p) {
            ondragleave="onSlotDragLeave(event)"
            ondrop="onSlotDrop(event,'${rack.id}',${u})">
         ${dev ? `
+          ${dev.status ? `<span class="status-dot-rack" style="background:${STATUS_COLORS[dev.status]||'#778899'}" title="${esc(STATUS_LABELS[dev.status]||dev.status)}"></span>` : ''}
           <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP?'min-width:90px;max-width:90px;':''}flex-shrink:0"
                draggable="true"
                ondblclick="event.stopPropagation();editDevice('${dev.id}')"
@@ -3542,9 +3905,9 @@ function renderPorts() {
   const p = getProject();
   const portDevs = p.devices.filter(d => (d.ports||0) > 0 && d.deviceType !== 'Patch Panel');
   const patchPanels = p.devices.filter(d => d.deviceType === 'Patch Panel' && (d.ports||0) > 0);
-  setTopbarActions(`<button class="btn btn-ghost btn-sm" onclick="addPatchPanel()">⊟ New Patch Panel</button>`);
 
   if (portDevs.length === 0 && patchPanels.length === 0) {
+    setTopbarActions(`<button class="btn btn-ghost btn-sm" onclick="addPatchPanel()">⊟ New Patch Panel</button>`);
     document.getElementById('view-area').innerHTML = `<div class="empty-state"><div class="empty-icon">⊡</div><h3>No port-capable devices</h3><p>Add a Switch, Router, Firewall, Server, or NAS with a port count, or create a Patch Panel.</p><br><div style="display:flex;gap:10px;justify-content:center"><button class="btn btn-ghost" onclick="setView('devices')">Go to Device List</button><button class="btn btn-primary" onclick="addPatchPanel()">⊟ New Patch Panel</button></div></div>`;
     return;
   }
@@ -3552,6 +3915,10 @@ function renderPorts() {
   const allPortDevs = [...portDevs, ...patchPanels];
   const selId = state.selectedSwitch && allPortDevs.find(d=>d.id===state.selectedSwitch) ? state.selectedSwitch : allPortDevs[0].id;
   state.selectedSwitch = selId;
+  setTopbarActions(`
+    <button class="btn btn-ghost btn-sm" onclick="addPatchPanel()">⊟ New Patch Panel</button>
+    <button class="btn btn-ghost btn-sm" onclick="printPortLabels('${selId}')">🖨 Print Labels</button>
+  `);
   const sw = p.devices.find(d => d.id === selId);
 
   let html = `<div class="port-layout">
@@ -4407,6 +4774,7 @@ async function lookupMacManufacturers() {
 function renderSettings() {
   const p = getProject();
   setTopbarActions(`
+    <button class="btn btn-ghost btn-sm" onclick="manageLocations()">📍 Locations</button>
     <button class="btn btn-ghost btn-sm" onclick="resetTypeColors()">↺ Reset Colors</button>
     <button class="btn btn-primary btn-sm" onclick="saveProjectDetails()">Save Details</button>`);
   document.getElementById('view-area').innerHTML = `
@@ -5701,6 +6069,1007 @@ function replacePhoto(e, idx) {
 // legacy - keep for any stale refs
 function openPhotoLightbox(idx) { openPhotoEditor(idx); }
 function savePhotoCaption(idx) { savePhotoEditor(idx); }
+
+// ═══════════════════════════════════════════
+//  FEATURE 5: VENDORS & CONTRACTS
+// ═══════════════════════════════════════════
+const VENDOR_TYPES = ['ISP','MSP','Carrier','Vendor','Other'];
+
+function addVendor() { openVendorModal(null); }
+function editVendor(id) { openVendorModal(id); }
+
+function openVendorModal(id) {
+  const p = getProject();
+  const v = id ? (p.vendors||[]).find(x=>x.id===id) : null;
+  const isNew = !v;
+  const typeOpts = VENDOR_TYPES.map(t=>`<option value="${t}" ${(v?.type||'Vendor')===t?'selected':''}>${t}</option>`).join('');
+  openModal(`
+    <h3>${isNew?'Add Vendor':'Edit Vendor'}</h3>
+    <div class="form-row-inline">
+      <div class="form-row" style="flex:2"><label>Vendor Name *</label>
+        <input class="form-control" id="v-name" value="${esc(v?.name||'')}" placeholder="Comcast Business"></div>
+      <div class="form-row"><label>Type</label>
+        <select class="form-control" id="v-type">${typeOpts}</select></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Account #</label>
+        <input class="form-control" id="v-acct" value="${esc(v?.accountNum||'')}" placeholder="ACC-123456"></div>
+      <div class="form-row"><label>Circuit ID</label>
+        <input class="form-control" id="v-circuit" value="${esc(v?.circuitId||'')}" placeholder="CKT-XXXX"></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Support Phone</label>
+        <input class="form-control" id="v-phone" value="${esc(v?.supportPhone||'')}" placeholder="1-800-XXX-XXXX"></div>
+      <div class="form-row"><label>Support Email</label>
+        <input class="form-control" id="v-email" value="${esc(v?.supportEmail||'')}" placeholder="support@vendor.com"></div>
+    </div>
+    <div class="form-row"><label>Notes</label>
+      <textarea class="form-control" id="v-notes" rows="2" placeholder="Contract terms, SLA, etc.">${esc(v?.notes||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveVendor('${id||''}')">Save</button>
+    </div>`, '520px');
+  setTimeout(()=>document.getElementById('v-name')?.focus(),50);
+}
+
+function saveVendor(id) {
+  const p = getProject();
+  const name = document.getElementById('v-name')?.value?.trim();
+  if (!name) return toast('Vendor name is required','error');
+  const data = {
+    name, type: document.getElementById('v-type')?.value||'Vendor',
+    accountNum: document.getElementById('v-acct')?.value?.trim()||'',
+    circuitId: document.getElementById('v-circuit')?.value?.trim()||'',
+    supportPhone: document.getElementById('v-phone')?.value?.trim()||'',
+    supportEmail: document.getElementById('v-email')?.value?.trim()||'',
+    notes: document.getElementById('v-notes')?.value?.trim()||'',
+  };
+  if (!p.vendors) p.vendors=[];
+  if (id) {
+    const idx=p.vendors.findIndex(v=>v.id===id);
+    if(idx>=0){Object.assign(p.vendors[idx],data);logChange(`Vendor updated: ${name}`);}
+  } else {
+    p.vendors.push({id:genId(),...data});
+    logChange(`Vendor added: ${name} (${data.type})`);
+  }
+  save(); closeModal(); renderDashboard(); toast(id?'Vendor updated':'Vendor added','success');
+}
+
+function deleteVendor(id) {
+  if(!confirm('Delete this vendor?')) return;
+  const p=getProject();
+  const v=(p.vendors||[]).find(x=>x.id===id);
+  if(v) logChange(`Vendor deleted: ${v.name}`);
+  p.vendors=(p.vendors||[]).filter(x=>x.id!==id);
+  save(); renderDashboard(); toast('Vendor deleted');
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 7: TIME LOG
+// ═══════════════════════════════════════════
+let _timerInterval = null;
+
+function startTimer() {
+  const p = getProject();
+  if (!p) return;
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  state.activeTimer = {
+    id: genId(),
+    date: now.toISOString().slice(0,10),
+    startTime: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    tech: '',
+    startTs: Date.now()
+  };
+  logChange('Time log: timer started');
+  save();
+  renderDashboard();
+}
+
+function stopTimer() {
+  const p = getProject();
+  if (!p || !state.activeTimer) return;
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  openModal(`
+    <h3>Stop Timer</h3>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Started: ${state.activeTimer.startTime} on ${state.activeTimer.date}</p>
+    <div class="form-row"><label>Technician</label>
+      <input class="form-control" id="te-tech" value="${esc(state.activeTimer.tech||'')}" placeholder="Your name"></div>
+    <div class="form-row"><label>Notes</label>
+      <textarea class="form-control" id="te-notes" rows="2" placeholder="What was done..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Keep Running</button>
+      <button class="btn btn-primary" onclick="confirmStopTimer()">Stop &amp; Save</button>
+    </div>`);
+}
+
+function confirmStopTimer() {
+  const p = getProject();
+  if (!p || !state.activeTimer) return;
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const entry = {
+    id: state.activeTimer.id,
+    date: state.activeTimer.date,
+    startTime: state.activeTimer.startTime,
+    endTime: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    tech: document.getElementById('te-tech')?.value?.trim()||'',
+    notes: document.getElementById('te-notes')?.value?.trim()||'',
+  };
+  if (!p.timeLog) p.timeLog=[];
+  p.timeLog.push(entry);
+  logChange(`Time log: entry added ${entry.date} ${entry.startTime}–${entry.endTime}${entry.tech?' by '+entry.tech:''}`);
+  state.activeTimer = null;
+  if (_timerInterval) { clearInterval(_timerInterval); _timerInterval=null; }
+  save(); closeModal(); renderDashboard(); toast('Time entry saved','success');
+}
+
+function updateTimerDisplay() {
+  if (!state.activeTimer) return;
+  const el = document.getElementById('timer-elapsed');
+  if (!el) return;
+  const elapsed = Date.now() - state.activeTimer.startTs;
+  const h = Math.floor(elapsed/3600000);
+  const m = Math.floor((elapsed%3600000)/60000);
+  const s = Math.floor((elapsed%60000)/1000);
+  el.textContent = `${h>0?h+'h ':''} ${m}m ${s}s`;
+  if (!_timerInterval) _timerInterval = setInterval(()=>{ const e2=document.getElementById('timer-elapsed'); if(!e2){clearInterval(_timerInterval);_timerInterval=null;return;} const el2=Date.now()-state.activeTimer.startTs; const hh=Math.floor(el2/3600000),mm=Math.floor((el2%3600000)/60000),ss=Math.floor((el2%60000)/1000); e2.textContent=`${hh>0?hh+'h ':''} ${mm}m ${ss}s`; }, 1000);
+}
+
+function addTimeEntry() { openTimeEntryModal(null); }
+function editTimeEntry(id) { openTimeEntryModal(id); }
+
+function openTimeEntryModal(id) {
+  const p = getProject();
+  const e = id ? (p.timeLog||[]).find(x=>x.id===id) : null;
+  const today = new Date().toISOString().slice(0,10);
+  openModal(`
+    <h3>${id?'Edit':'Add'} Time Entry</h3>
+    <div class="form-row"><label>Date</label>
+      <input class="form-control" type="date" id="te-date" value="${esc(e?.date||today)}"></div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Start Time</label>
+        <input class="form-control" type="time" id="te-start" value="${esc(e?.startTime||'08:00')}"></div>
+      <div class="form-row"><label>End Time</label>
+        <input class="form-control" type="time" id="te-end" value="${esc(e?.endTime||'09:00')}"></div>
+    </div>
+    <div class="form-row"><label>Technician</label>
+      <input class="form-control" id="te-tech2" value="${esc(e?.tech||'')}" placeholder="Name"></div>
+    <div class="form-row"><label>Notes</label>
+      <textarea class="form-control" id="te-notes2" rows="2" placeholder="Work done...">${esc(e?.notes||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTimeEntry('${id||''}')">Save</button>
+    </div>`);
+}
+
+function saveTimeEntry(id) {
+  const p = getProject();
+  const data = {
+    date: document.getElementById('te-date')?.value||'',
+    startTime: document.getElementById('te-start')?.value||'',
+    endTime: document.getElementById('te-end')?.value||'',
+    tech: document.getElementById('te-tech2')?.value?.trim()||'',
+    notes: document.getElementById('te-notes2')?.value?.trim()||'',
+  };
+  if (!p.timeLog) p.timeLog=[];
+  if (id) {
+    const idx=p.timeLog.findIndex(e=>e.id===id);
+    if(idx>=0){Object.assign(p.timeLog[idx],data);logChange(`Time entry updated: ${data.date}`);}
+  } else {
+    p.timeLog.push({id:genId(),...data});
+    logChange(`Time entry added: ${data.date} ${data.startTime}–${data.endTime}`);
+  }
+  save(); closeModal(); renderDashboard(); toast(id?'Entry updated':'Entry added','success');
+}
+
+function deleteTimeEntry(id) {
+  const p=getProject();
+  p.timeLog=(p.timeLog||[]).filter(e=>e.id!==id);
+  logChange('Time entry deleted');
+  save(); renderDashboard(); toast('Entry deleted');
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 6: SITE SURVEY CHECKLIST
+// ═══════════════════════════════════════════
+function renderChecklist() {
+  const p = getProject();
+  if (!p.checklist) p.checklist = getDefaultChecklist();
+  const cl = p.checklist;
+  const done = cl.filter(i=>i.done).length;
+  const total = cl.length;
+  const pct = total>0 ? Math.round(done/total*100) : 0;
+  updateChecklistNavBadge();
+
+  setTopbarActions(`
+    <button class="btn btn-ghost btn-sm" onclick="resetChecklist()">↺ Reset All</button>
+    <button class="btn btn-primary btn-sm" onclick="addChecklistItem()">+ Add Item</button>`);
+
+  const cats = [...new Set(cl.map(i=>i.category||'Other'))];
+  document.getElementById('view-area').innerHTML = `
+    <div style="max-width:800px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="font-size:14px;color:var(--text2)">${done} of ${total} complete</div>
+        <div style="font-size:14px;font-weight:600;color:${pct===100?'var(--green)':'var(--amber)'}">${pct}%</div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" style="width:${pct}%"></div>
+      </div>
+      ${cats.map(cat=>{
+        const items = cl.filter(i=>(i.category||'Other')===cat);
+        const catDone = items.filter(i=>i.done).length;
+        return `<div class="checklist-group">
+          <div class="checklist-group-hdr">
+            <span>${esc(cat)}</span>
+            <span style="color:var(--text3)">${catDone}/${items.length}</span>
+          </div>
+          ${items.map(item=>`
+            <div class="checklist-item ${item.done?'done':''}">
+              <input type="checkbox" ${item.done?'checked':''} onchange="toggleChecklistItem('${item.id}',this.checked)">
+              <label onclick="toggleChecklistItem('${item.id}',${!item.done})">${esc(item.text)}</label>
+              <button class="btn btn-danger btn-sm btn-icon" onclick="deleteChecklistItem('${item.id}')" title="Delete">✕</button>
+            </div>`).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function toggleChecklistItem(id, checked) {
+  const p = getProject();
+  const item = (p.checklist||[]).find(i=>i.id===id);
+  if (item) { item.done = checked; save(); renderChecklist(); }
+}
+
+function deleteChecklistItem(id) {
+  const p = getProject();
+  p.checklist = (p.checklist||[]).filter(i=>i.id!==id);
+  save(); renderChecklist();
+}
+
+function resetChecklist() {
+  if (!confirm('Uncheck all checklist items?')) return;
+  const p = getProject();
+  (p.checklist||[]).forEach(i=>i.done=false);
+  logChange('Checklist reset');
+  save(); renderChecklist(); toast('Checklist reset');
+}
+
+function addChecklistItem() {
+  openModal(`
+    <h3>Add Checklist Item</h3>
+    <div class="form-row"><label>Item Text *</label>
+      <input class="form-control" id="ci-text" placeholder="e.g. Document UPS capacity"></div>
+    <div class="form-row"><label>Category</label>
+      <input class="form-control" id="ci-cat" placeholder="e.g. Discovery, Cabling..." value="Discovery"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveChecklistItem()">Add</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('ci-text')?.focus(),50);
+}
+
+function saveChecklistItem() {
+  const text = document.getElementById('ci-text')?.value?.trim();
+  if (!text) return toast('Item text is required','error');
+  const cat = document.getElementById('ci-cat')?.value?.trim()||'Other';
+  const p = getProject();
+  if (!p.checklist) p.checklist=[];
+  p.checklist.push({id:genId(),text,done:false,category:cat});
+  logChange(`Checklist item added: "${text}"`);
+  save(); closeModal(); renderChecklist(); toast('Item added','success');
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 9: PRINT REPORT
+// ═══════════════════════════════════════════
+function printSiteReport() {
+  const p = getProject();
+  const now = new Date().toLocaleString();
+  const devsByType = [...p.devices].sort((a,b)=>(a.deviceType||'').localeCompare(b.deviceType||''));
+  const log50 = (p.changelog||[]).slice(0,50);
+
+  const css = `body{font-family:Arial,sans-serif;font-size:12px;color:#111;background:#fff;margin:0;padding:20px}
+    h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:20px 0 8px;border-bottom:2px solid #333;padding-bottom:4px}
+    h3{font-size:13px;margin:14px 0 6px;color:#444}
+    table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px}
+    th{background:#eee;padding:6px 8px;text-align:left;border:1px solid #ccc;font-size:10px}
+    td{padding:5px 8px;border:1px solid #ddd}tr:nth-child(even)td{background:#f9f9f9}
+    .header{border-bottom:3px solid #333;margin-bottom:20px;padding-bottom:12px}
+    .meta{color:#555;font-size:11px;margin:2px 0}
+    @media print{body{padding:0}h2{page-break-before:auto}}`;
+
+  const devTableRows = devsByType.map(d=>{
+    const rack = p.racks.find(r=>r.id===d.rackId);
+    return `<tr>
+      <td>${d.name}</td><td>${d.deviceType||''}</td>
+      <td>${d.ip||'—'}</td><td>${d.mac||'—'}</td>
+      <td>${d.manufacturer||''} ${d.model||''}</td>
+      <td>${rack?rack.name:'—'}</td>
+      <td>${d.serial||'—'}</td>
+      <td>${STATUS_LABELS[d.status]||d.status||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const rackSections = p.racks.map(r=>{
+    const rDevs = p.devices.filter(d=>d.rackId===r.id).sort((a,b)=>(a.rackU||0)-(b.rackU||0));
+    return `<h3>${r.name} — ${r.location||'No location'} (${r.uHeight}U)</h3>
+      <table><thead><tr><th>U</th><th>Device</th><th>Type</th><th>IP</th></tr></thead><tbody>
+      ${rDevs.map(d=>`<tr><td>${d.rackU||'—'}</td><td>${d.name}</td><td>${d.deviceType||''}</td><td>${d.ip||'—'}</td></tr>`).join('')}
+      </tbody></table>`;
+  }).join('');
+
+  const vendorRows = (p.vendors||[]).map(v=>`<tr>
+    <td>${v.type||''}</td><td>${v.name||''}</td><td>${v.accountNum||'—'}</td>
+    <td>${v.circuitId||'—'}</td><td>${v.supportPhone||''} ${v.supportEmail||''}</td>
+  </tr>`).join('');
+
+  const notesList = (p.siteNotes||[]).map(n=>`<div style="margin-bottom:8px;padding:6px 8px;border:1px solid #ddd;border-radius:3px">
+    <div style="font-size:10px;color:#777">${fmtTs(n.ts)}</div>
+    <div>${n.text}</div>
+  </div>`).join('');
+
+  const logList = log50.map(e=>`<tr><td style="white-space:nowrap">${fmtTs(e.ts)}</td><td>${e.msg}</td></tr>`).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Site Report — ${p.name}</title><style>${css}</style></head>
+    <body>
+    <div class="header">
+      <h1>${p.name||'Site Report'}</h1>
+      <div class="meta">Company: ${p.company||'—'}</div>
+      <div class="meta">Location: ${p.location||'—'}</div>
+      <div class="meta">Management Contact: ${p.contactMgmt||'—'} &nbsp;·&nbsp; IT Contact: ${p.contactIT||'—'}</div>
+      <div class="meta">Generated: ${now}</div>
+    </div>
+
+    <h2>1. Device Inventory (${devsByType.length} devices)</h2>
+    ${devsByType.length>0?`<table><thead><tr><th>Name</th><th>Type</th><th>IP</th><th>MAC</th><th>Manufacturer/Model</th><th>Rack</th><th>Serial</th><th>Status</th></tr></thead><tbody>${devTableRows}</tbody></table>`:'<p>No devices.</p>'}
+
+    <h2>2. Rack Summary</h2>
+    ${p.racks.length>0?rackSections:'<p>No racks.</p>'}
+
+    <h2>3. Vendors &amp; Contracts</h2>
+    ${(p.vendors||[]).length>0?`<table><thead><tr><th>Type</th><th>Name</th><th>Account #</th><th>Circuit ID</th><th>Support</th></tr></thead><tbody>${vendorRows}</tbody></table>`:'<p>No vendors.</p>'}
+
+    <h2>4. Site Notes</h2>
+    ${(p.siteNotes||[]).length>0?notesList:'<p>No site notes.</p>'}
+
+    <h2>5. Change Log (last 50 entries)</h2>
+    ${log50.length>0?`<table><thead><tr><th>Date/Time</th><th>Event</th></tr></thead><tbody>${logList}</tbody></table>`:'<p>No log entries.</p>'}
+    </body></html>`;
+
+  const w = window.open('','_blank','width=900,height=700');
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>w.print(), 800);
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 10: PORT LABEL SHEET
+// ═══════════════════════════════════════════
+function printPortLabels(switchId) {
+  const p = getProject();
+  const sw = p.devices.find(d=>d.id===switchId);
+  if (!sw) return;
+  const portCount = sw.ports||24;
+  const assignments = sw.portAssignments||{};
+  const labels = sw.portLabels||{};
+  const now = new Date().toLocaleDateString();
+
+  const labelCss = `body{font-family:Arial,sans-serif;font-size:9px;margin:0;padding:0.25in}
+    h1{font-size:14px;margin:0 0 8px;border-bottom:2px solid #333;padding-bottom:6px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0.1in;margin-top:0.1in}
+    .label{border:1px solid #999;border-radius:3px;padding:4px 6px;height:0.85in;display:flex;flex-direction:column;justify-content:center;overflow:hidden;box-sizing:border-box}
+    .port-num{font-size:10px;font-weight:700;color:#333;margin-bottom:2px}
+    .port-lbl{font-size:9px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .port-dev{font-size:8px;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    @media print{@page{size:letter;margin:0.5in} body{padding:0} h1{font-size:13px}}`;
+
+  let labelHtml = '';
+  for(let i=1;i<=portCount;i++){
+    const connDev = assignments[i] ? p.devices.find(d=>d.id===assignments[i]) : null;
+    const lbl = labels[i]||'';
+    labelHtml += `<div class="label">
+      <div class="port-num">Port ${i}</div>
+      ${lbl?`<div class="port-lbl">${lbl}</div>`:'<div class="port-lbl" style="color:#ccc">—</div>'}
+      ${connDev?`<div class="port-dev">→ ${connDev.name}</div>`:''}
+    </div>`;
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Port Labels — ${sw.name}</title><style>${labelCss}</style></head>
+    <body>
+    <h1>${sw.name} — Port Labels &nbsp;<span style="font-size:11px;color:#777;font-weight:400">Printed: ${now}</span></h1>
+    <div class="grid">${labelHtml}</div>
+    </body></html>`;
+
+  const w = window.open('','_blank','width=800,height=600');
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>w.print(), 600);
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 11: CABLE RUNS
+// ═══════════════════════════════════════════
+const CABLE_TYPES = ['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'];
+
+function renderCableRuns() {
+  const p = getProject();
+  if (!p.cableRuns) p.cableRuns=[];
+  const runs = p.cableRuns;
+  const filterType = state.cableTypeFilter||'all';
+  const filterRoom = (state.cableRoomFilter||'').toLowerCase();
+
+  setTopbarActions(`<button class="btn btn-primary btn-sm" onclick="addCableRun()">+ Add Cable Run</button>`);
+
+  // Filtered runs
+  let filtered = runs.filter(r=>{
+    if(filterType!=='all' && r.type!==filterType) return false;
+    if(filterRoom && !(r.fromRoom||'').toLowerCase().includes(filterRoom) && !(r.toRoom||'').toLowerCase().includes(filterRoom)) return false;
+    return true;
+  });
+
+  // Stats
+  const byType={};
+  runs.forEach(r=>{ byType[r.type||'Other']=(byType[r.type||'Other']||0)+1; });
+
+  document.getElementById('view-area').innerHTML = `
+    <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="search-box" style="max-width:200px">
+        <span style="color:var(--text3)">⌕</span>
+        <input placeholder="Filter by room..." value="${esc(state.cableRoomFilter||'')}" oninput="state.cableRoomFilter=this.value;renderCableRuns()">
+      </div>
+      <div class="filter-tabs">
+        <div class="filter-tab ${filterType==='all'?'active':''}" onclick="state.cableTypeFilter='all';renderCableRuns()">All (${runs.length})</div>
+        ${CABLE_TYPES.filter(t=>byType[t]).map(t=>`<div class="filter-tab ${filterType===t?'active':''}" onclick="state.cableTypeFilter='${t}';renderCableRuns()">${esc(t)} (${byType[t]||0})</div>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="stat-card"><div class="sv">${runs.length}</div><div class="sl">Total Runs</div></div>
+      ${Object.entries(byType).map(([t,c])=>`<div class="stat-card"><div class="sv accent" style="font-size:18px">${c}</div><div class="sl">${esc(t)}</div></div>`).join('')}
+      <div class="stat-card"><div class="sv green">${runs.filter(r=>r.verified).length}</div><div class="sl">Verified</div></div>
+    </div>
+    ${filtered.length===0 ? `<div class="empty-state"><div class="empty-icon">⇄</div><h3>No cable runs yet</h3><p>Add cable runs to track physical connections between rooms and patch panels.</p></div>` : `
+    <div class="devices-table-scroll">
+      <table>
+        <thead><tr>
+          <th>Label</th><th>From</th><th>To</th><th>Type</th><th>Length</th><th>Color</th><th>Verified</th><th>Notes</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${filtered.map(r=>`<tr>
+            <td style="font-weight:600;font-family:var(--mono)">${esc(r.label||'—')}</td>
+            <td>${esc(r.fromRoom||'—')}${r.fromPort?`<span style="color:var(--text3)"> P${esc(r.fromPort)}</span>`:''}</td>
+            <td>${esc(r.toRoom||'—')}${r.toPort?`<span style="color:var(--text3)"> P${esc(r.toPort)}</span>`:''}</td>
+            <td><span class="cable-type-badge">${esc(r.type||'—')}</span></td>
+            <td class="mono">${esc(r.length||'—')}</td>
+            <td>${r.color?`<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${esc(r.color)};border:1px solid rgba(255,255,255,.2);vertical-align:middle"></span>`:''}</td>
+            <td><input type="checkbox" ${r.verified?'checked':''} onchange="toggleCableVerified('${r.id}',this.checked)" title="Mark verified"></td>
+            <td style="color:var(--text2);font-size:12px">${esc(r.notes||'')}</td>
+            <td><div class="td-actions">
+              <button class="btn btn-ghost btn-sm btn-icon" onclick="editCableRun('${r.id}')">✎</button>
+              <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCableRun('${r.id}')">✕</button>
+            </div></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`}`;
+}
+
+function toggleCableVerified(id, val) {
+  const p=getProject();
+  const r=(p.cableRuns||[]).find(x=>x.id===id);
+  if(r){r.verified=val;logChange(`Cable run ${r.label||id}: verified=${val}`);save();}
+}
+
+function addCableRun() { openCableRunModal(null); }
+function editCableRun(id) { openCableRunModal(id); }
+
+function openCableRunModal(id) {
+  const p=getProject();
+  const r=id?(p.cableRuns||[]).find(x=>x.id===id):null;
+  const typeOpts=CABLE_TYPES.map(t=>`<option value="${t}" ${(r?.type||'Cat6')===t?'selected':''}>${t}</option>`).join('');
+  openModal(`
+    <h3>${id?'Edit':'Add'} Cable Run</h3>
+    <div class="form-row-inline">
+      <div class="form-row" style="flex:1"><label>Label</label>
+        <input class="form-control" id="cr-label" value="${esc(r?.label||'')}" placeholder="e.g. CR-001"></div>
+      <div class="form-row"><label>Type</label>
+        <select class="form-control" id="cr-type">${typeOpts}</select></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>From Room</label>
+        <input class="form-control" id="cr-fromroom" value="${esc(r?.fromRoom||'')}" placeholder="IDF-1"></div>
+      <div class="form-row"><label>From Port</label>
+        <input class="form-control" id="cr-fromport" value="${esc(r?.fromPort||'')}" placeholder="P12"></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>To Room</label>
+        <input class="form-control" id="cr-toroom" value="${esc(r?.toRoom||'')}" placeholder="MDF"></div>
+      <div class="form-row"><label>To Port</label>
+        <input class="form-control" id="cr-toport" value="${esc(r?.toPort||'')}" placeholder="P24"></div>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Length (ft/m)</label>
+        <input class="form-control" id="cr-length" value="${esc(r?.length||'')}" placeholder="100ft"></div>
+      <div class="form-row"><label>Color</label>
+        <input type="color" class="form-control" id="cr-color" value="${r?.color||'#4488ff'}" style="height:38px;padding:4px"></div>
+    </div>
+    <div class="form-row"><label>Notes</label>
+      <textarea class="form-control" id="cr-notes" rows="2">${esc(r?.notes||'')}</textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCableRun('${id||''}')">Save</button>
+    </div>`, '540px');
+  setTimeout(()=>document.getElementById('cr-label')?.focus(),50);
+}
+
+function saveCableRun(id) {
+  const p=getProject();
+  const data={
+    label: document.getElementById('cr-label')?.value?.trim()||'',
+    type: document.getElementById('cr-type')?.value||'Cat6',
+    fromRoom: document.getElementById('cr-fromroom')?.value?.trim()||'',
+    fromPort: document.getElementById('cr-fromport')?.value?.trim()||'',
+    toRoom: document.getElementById('cr-toroom')?.value?.trim()||'',
+    toPort: document.getElementById('cr-toport')?.value?.trim()||'',
+    length: document.getElementById('cr-length')?.value?.trim()||'',
+    color: document.getElementById('cr-color')?.value||'',
+    notes: document.getElementById('cr-notes')?.value?.trim()||'',
+    verified: id ? ((p.cableRuns||[]).find(x=>x.id===id)?.verified||false) : false,
+  };
+  if(!p.cableRuns) p.cableRuns=[];
+  if(id){
+    const idx=p.cableRuns.findIndex(x=>x.id===id);
+    if(idx>=0){Object.assign(p.cableRuns[idx],data);logChange(`Cable run updated: ${data.label||id}`);}
+  } else {
+    p.cableRuns.push({id:genId(),...data});
+    logChange(`Cable run added: ${data.label||'(unlabeled)'} ${data.fromRoom}→${data.toRoom}`);
+  }
+  save(); closeModal(); renderCableRuns(); toast(id?'Cable run updated':'Cable run added','success');
+}
+
+function deleteCableRun(id) {
+  if(!confirm('Delete this cable run?')) return;
+  const p=getProject();
+  const r=(p.cableRuns||[]).find(x=>x.id===id);
+  if(r) logChange(`Cable run deleted: ${r.label||id}`);
+  p.cableRuns=(p.cableRuns||[]).filter(x=>x.id!==id);
+  save(); renderCableRuns(); toast('Deleted');
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 8: FIELD MODE
+// ═══════════════════════════════════════════
+function renderFieldMode() {
+  const p = getProject();
+  setTopbarActions('');
+  const today = new Date().toISOString().slice(0,10);
+  const todayDevs = p.devices.filter(d => d.addedDate && d.addedDate.startsWith(today));
+  const todayPhotos = (p.photos||[]).filter(ph => ph.ts && ph.ts.startsWith(today));
+
+  document.getElementById('view-area').innerHTML = `
+    <div style="max-width:640px;margin:0 auto">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px">
+        <div class="field-btn" onclick="fieldQuickPhoto()">
+          <div class="fbi">📷</div>
+          <div class="fbl">Quick Photo</div>
+          <div style="font-size:11px;color:var(--text2)">Capture & label</div>
+        </div>
+        <div class="field-btn" onclick="fieldQuickDevice()">
+          <div class="fbi">⊕</div>
+          <div class="fbl">Quick Device</div>
+          <div style="font-size:11px;color:var(--text2)">Fast add device</div>
+        </div>
+        <div class="field-btn" onclick="fieldQuickNote()">
+          <div class="fbi">📝</div>
+          <div class="fbl">Quick Note</div>
+          <div style="font-size:11px;color:var(--text2)">Site note</div>
+        </div>
+        <div class="field-btn" style="opacity:.5;cursor:default">
+          <div class="fbi">🔍</div>
+          <div class="fbl">Scan Subnet</div>
+          <div style="font-size:11px;color:var(--text2)">Coming soon</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Today's Captures</div>
+        ${todayDevs.length===0&&todayPhotos.length===0 ? `<div style="color:var(--text3);font-size:13px;padding:16px;background:var(--card);border:1px solid var(--border);border-radius:7px">Nothing captured today yet.</div>` : ''}
+        ${todayDevs.map(d=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:7px;margin-bottom:6px;cursor:pointer" onclick="editDevice('${d.id}')">
+            <span style="font-size:18px">${d.deviceType==='AP'?'📶':d.deviceType==='Switch'?'⊡':d.deviceType==='Server'?'⬜':'◈'}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600">${esc(d.name)}</div>
+              <div style="font-size:11px;color:var(--text2);font-family:var(--mono)">${esc(d.deviceType||'')} ${d.ip?'· '+d.ip:''}</div>
+            </div>
+            ${statusBadge(d.status)}
+          </div>`).join('')}
+        ${todayPhotos.map(ph=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
+            <span style="font-size:18px">📷</span>
+            <div style="flex:1;min-width:0"><div style="font-weight:600">${esc(ph.caption||'(No caption)')}</div>
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono)">${fmtTs(ph.ts)}</div></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function fieldQuickPhoto() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.setAttribute('capture','environment');
+  input.style.display='none';
+  document.body.appendChild(input);
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const caption = prompt('Caption for this photo:','');
+    if (caption === null) return;
+    const p = getProject();
+    if (!p.photos) p.photos=[];
+    if (!p.photoFolders) p.photoFolders=[];
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const photo = { id:genId(), caption:caption||file.name, data:ev.target.result, ts:new Date().toISOString(), folderId:null, assignments:[] };
+      p.photos.push(photo);
+      logChange(`Photo added (field): "${photo.caption}"`);
+      save();
+      renderFieldMode();
+      toast('Photo added','success');
+    };
+    reader.readAsDataURL(file);
+    input.remove();
+  };
+  input.click();
+}
+
+function fieldQuickDevice() {
+  const DTYPE_OPTS = DEVICE_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  openModal(`
+    <h3>⊕ Quick Add Device</h3>
+    <div class="form-row"><label>Device Name *</label>
+      <input class="form-control" id="fqd-name" placeholder="e.g. AP-Floor2-East" style="font-size:16px;padding:12px"></div>
+    <div class="form-row"><label>Type</label>
+      <select class="form-control" id="fqd-type">${DTYPE_OPTS}</select></div>
+    <div class="form-row"><label>IP Address</label>
+      <input class="form-control" id="fqd-ip" placeholder="192.168.1.x" type="text" inputmode="decimal"></div>
+    <div class="form-row"><label>Status</label>
+      <select class="form-control" id="fqd-status">
+        <option value="">— No Status —</option>
+        <option value="verified">✓ Verified</option>
+        <option value="needs-label">⚠ Needs Label</option>
+        <option value="needs-attention">⚠ Needs Attention</option>
+        <option value="unknown">? Unknown</option>
+      </select></div>
+    <div class="form-row"><label>Location / Notes</label>
+      <textarea class="form-control" id="fqd-notes" rows="2" placeholder="Location, notes..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveFieldDevice()" style="font-size:15px;padding:10px 24px">Add Device</button>
+    </div>`,'480px');
+  setTimeout(()=>document.getElementById('fqd-name')?.focus(),50);
+}
+
+function saveFieldDevice() {
+  const name = document.getElementById('fqd-name')?.value?.trim();
+  if (!name) return toast('Device name is required','error');
+  const p = getProject();
+  const deviceType = document.getElementById('fqd-type')?.value||'Misc.';
+  const newDev = {
+    id:genId(), name, deviceType,
+    type: deviceType==='Switch'?'switching':'non-switching',
+    ip: document.getElementById('fqd-ip')?.value?.trim()||'',
+    mac:'', manufacturer:'', model:'', ports:0,
+    notes: document.getElementById('fqd-notes')?.value?.trim()||'',
+    parentDeviceId:null, webUser:'', webPassword:'', webProtocol:'https',
+    deviceUHeight:1, status: document.getElementById('fqd-status')?.value||'',
+    serial:'', warrantyExpiry:'', eolDate:'',
+    addedDate: new Date().toISOString(),
+    rackId:null, rackU:null,
+    portAssignments:{}, portNotes:{}, portVlans:{}, portPeerPort:{}, portPoe:{}, portLabels:{}
+  };
+  p.devices.push(newDev);
+  logChange(`Device added (field mode): ${name} (${deviceType})`);
+  save(); closeModal(); renderFieldMode(); toast('Device added','success');
+}
+
+function fieldQuickNote() {
+  openModal(`
+    <h3>📝 Quick Note</h3>
+    <div class="form-row">
+      <textarea class="form-control" id="fqn-text" rows="4" placeholder="Type your site note..." style="font-size:16px;padding:12px"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveFieldNote()" style="font-size:15px;padding:10px 24px">Add Note</button>
+    </div>`,'440px');
+  setTimeout(()=>document.getElementById('fqn-text')?.focus(),50);
+}
+
+function saveFieldNote() {
+  const text = document.getElementById('fqn-text')?.value?.trim();
+  if (!text) return toast('Note is required','error');
+  const p = getProject();
+  if (!p.siteNotes) p.siteNotes=[];
+  p.siteNotes.unshift({id:genId(),ts:new Date().toISOString(),text});
+  logChange(`Site note added (field): "${text.slice(0,60)}"`);
+  save(); closeModal(); renderFieldMode(); toast('Note added','success');
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 12: LOCATIONS (lightweight — additive)
+// ═══════════════════════════════════════════
+const LOCATION_TYPES = ['building','floor','room'];
+
+function manageLocations() {
+  const p = getProject();
+  if (!p.locations) p.locations=[];
+  const locs = p.locations;
+  openModal(`
+    <h3>📍 Location Hierarchy</h3>
+    <p style="color:var(--text2);font-size:12px;margin-bottom:14px">Define buildings, floors, and rooms for structured location tracking.</p>
+    <div style="max-height:300px;overflow-y:auto;margin-bottom:12px">
+      ${locs.length===0?`<div style="color:var(--text3);font-size:12px;padding:8px">No locations defined yet.</div>`:
+        locs.map(l=>{
+          const parent = locs.find(x=>x.id===l.parentId);
+          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px">
+            <span style="font-size:10px;background:var(--card2);border:1px solid var(--border2);border-radius:3px;padding:1px 5px;font-family:var(--mono)">${esc(l.type||'')}</span>
+            <span style="flex:1">${esc(l.name||'')}</span>
+            ${parent?`<span style="font-size:11px;color:var(--text3)">↳ ${esc(parent.name)}</span>`:''}
+            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteLocation('${l.id}')">✕</button>
+          </div>`;
+        }).join('')}
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div class="form-row-inline">
+        <div class="form-row" style="flex:2"><label>Name</label>
+          <input class="form-control" id="loc-name" placeholder="Server Room A"></div>
+        <div class="form-row"><label>Type</label>
+          <select class="form-control" id="loc-type">
+            ${LOCATION_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="form-row"><label>Parent (optional)</label>
+        <select class="form-control" id="loc-parent">
+          <option value="">— None —</option>
+          ${locs.map(l=>`<option value="${l.id}">${esc(l.name)} (${l.type})</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="addLocation()">+ Add Location</button>
+    </div>`, '500px');
+}
+
+function addLocation() {
+  const name = document.getElementById('loc-name')?.value?.trim();
+  if (!name) return toast('Name is required','error');
+  const p = getProject();
+  if (!p.locations) p.locations=[];
+  p.locations.push({
+    id:genId(), name,
+    type: document.getElementById('loc-type')?.value||'room',
+    parentId: document.getElementById('loc-parent')?.value||null,
+    notes:''
+  });
+  logChange(`Location added: ${name}`);
+  save(); manageLocations();
+}
+
+function deleteLocation(id) {
+  const p=getProject();
+  const l=(p.locations||[]).find(x=>x.id===id);
+  if(l) logChange(`Location deleted: ${l.name}`);
+  p.locations=(p.locations||[]).filter(x=>x.id!==id&&x.parentId!==id);
+  save(); manageLocations();
+}
+
+// ═══════════════════════════════════════════
+//  FEATURE 13: SITE MAP
+// ═══════════════════════════════════════════
+let _smPan={x:0,y:0},_smZoom=1,_smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0};
+
+function renderSiteMap() {
+  const p = getProject();
+  if (!p.siteMap) p.siteMap={data:null,markers:[]};
+  setTopbarActions(`
+    ${p.siteMap.data?`<button class="btn btn-ghost btn-sm" onclick="clearSiteMap()">✕ Clear Map</button>`:''}
+    <button class="btn btn-ghost btn-sm" onclick="addSiteMapMarker()">+ Add Marker</button>
+    ${!p.siteMap.data?`<label class="btn btn-primary btn-sm" style="cursor:pointer">📁 Upload Floor Plan<input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)"></label>`:''}
+  `);
+
+  if (!p.siteMap.data) {
+    document.getElementById('view-area').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🗺</div>
+        <h3>No floor plan uploaded</h3>
+        <p>Upload a floor plan image to place markers for racks, rooms, and equipment.</p>
+        <br>
+        <label class="btn btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px">
+          📁 Upload Floor Plan
+          <input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)">
+        </label>
+      </div>`;
+    return;
+  }
+
+  const markers = p.siteMap.markers||[];
+  document.getElementById('view-area').innerHTML = `
+    <div style="display:flex;gap:14px;height:calc(100vh-130px)">
+      <div style="flex:1;position:relative">
+        <div id="sm-canvas" class="sitemap-canvas" style="width:100%;height:calc(100vh - 150px);cursor:crosshair;user-select:none"
+          onmousedown="smMouseDown(event)" onmousemove="smMouseMove(event)" onmouseup="smMouseUp(event)"
+          ondblclick="smDblClick(event)" onwheel="smWheel(event)">
+          <div id="sm-pan" style="position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})">
+            <img id="sm-img" src="${p.siteMap.data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
+            <div id="sm-markers" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
+              ${markers.map(m=>`
+                <div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all"
+                  title="${esc(m.label)}" onclick="event.stopPropagation();smMarkerClick('${m.id}')">
+                  <div class="sitemap-label">${esc(m.label)}</div>
+                  <div class="sitemap-pin" style="background:${m.color||'#00c8ff'}"></div>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div style="position:absolute;bottom:8px;left:8px;display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="smZoomIn()">+</button>
+          <button class="btn btn-ghost btn-sm" onclick="smZoomOut()">−</button>
+          <button class="btn btn-ghost btn-sm" onclick="smResetView()">⟳</button>
+        </div>
+      </div>
+      <div style="width:200px;flex-shrink:0">
+        <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Markers (${markers.length})</div>
+        ${markers.map(m=>`
+          <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smMarkerClick('${m.id}')">
+            <span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0"></span>
+            <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
+            <button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteSmMarker('${m.id}')" style="font-size:10px;padding:2px 5px">✕</button>
+          </div>`).join('')}
+        ${markers.length===0?`<div style="color:var(--text3);font-size:12px">Double-click the map to place a marker.</div>`:''}
+      </div>
+    </div>`;
+}
+
+function uploadSiteMap(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const p = getProject();
+    if (!p.siteMap) p.siteMap={data:null,markers:[]};
+    p.siteMap.data = ev.target.result;
+    _smPan={x:0,y:0}; _smZoom=1;
+    logChange('Site map floor plan uploaded');
+    save(); renderSiteMap(); toast('Floor plan uploaded','success');
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearSiteMap() {
+  if (!confirm('Clear the floor plan? Markers will be kept.')) return;
+  const p=getProject();
+  if(p.siteMap) p.siteMap.data=null;
+  logChange('Site map floor plan cleared');
+  save(); renderSiteMap();
+}
+
+function smMouseDown(e) {
+  if (e.button!==0) return;
+  _smDragging=true;
+  _smDragStart={x:e.clientX,y:e.clientY};
+  _smPanStart={..._smPan};
+  document.getElementById('sm-canvas').style.cursor='grabbing';
+}
+function smMouseMove(e) {
+  if(!_smDragging) return;
+  _smPan.x=_smPanStart.x+(e.clientX-_smDragStart.x);
+  _smPan.y=_smPanStart.y+(e.clientY-_smDragStart.y);
+  const pan=document.getElementById('sm-pan');
+  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
+}
+function smMouseUp(e) {
+  _smDragging=false;
+  const c=document.getElementById('sm-canvas');
+  if(c) c.style.cursor='crosshair';
+}
+function smWheel(e) {
+  e.preventDefault();
+  const delta = e.deltaY<0?1.1:0.9;
+  _smZoom=Math.max(0.2,Math.min(5,_smZoom*delta));
+  const pan=document.getElementById('sm-pan');
+  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
+}
+function smZoomIn(){_smZoom=Math.min(5,_smZoom*1.2);const pan=document.getElementById('sm-pan');if(pan)pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;}
+function smZoomOut(){_smZoom=Math.max(0.2,_smZoom/1.2);const pan=document.getElementById('sm-pan');if(pan)pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;}
+function smResetView(){_smPan={x:0,y:0};_smZoom=1;const pan=document.getElementById('sm-pan');if(pan)pan.style.transform='translate(0px,0px) scale(1)';}
+
+function smDblClick(e) {
+  const p=getProject();
+  if(!p.siteMap?.data) return;
+  const img=document.getElementById('sm-img');
+  if(!img) return;
+  const rect=img.getBoundingClientRect();
+  const xPct=((e.clientX-rect.left)/rect.width*100).toFixed(2);
+  const yPct=((e.clientY-rect.top)/rect.height*100).toFixed(2);
+  openSmMarkerModal(null,xPct,yPct);
+}
+
+function addSiteMapMarker() {
+  openSmMarkerModal(null,'50','50');
+}
+
+function openSmMarkerModal(id,xPct,yPct) {
+  const p=getProject();
+  const m=id?(p.siteMap?.markers||[]).find(x=>x.id===id):null;
+  const rackOpts=`<option value="">— None —</option>`+
+    p.racks.map(r=>`<option value="${r.id}" ${m?.rackId===r.id?'selected':''}>${esc(r.name)}</option>`).join('');
+  openModal(`
+    <h3>${id?'Edit':'Place'} Marker</h3>
+    <div class="form-row"><label>Label *</label>
+      <input class="form-control" id="sm-label" value="${esc(m?.label||'')}" placeholder="Server Room A"></div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Type</label>
+        <select class="form-control" id="sm-type">
+          <option value="room" ${(m?.type||'room')==='room'?'selected':''}>Room</option>
+          <option value="rack" ${m?.type==='rack'?'selected':''}>Rack</option>
+          <option value="device" ${m?.type==='device'?'selected':''}>Device</option>
+        </select></div>
+      <div class="form-row"><label>Color</label>
+        <input type="color" class="form-control" id="sm-color" value="${m?.color||'#00c8ff'}" style="height:38px;padding:4px"></div>
+    </div>
+    <div class="form-row"><label>Linked Rack (optional)</label>
+      <select class="form-control" id="sm-rack">${rackOpts}</select></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSmMarker('${id||''}','${xPct||50}','${yPct||50}')">Save</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('sm-label')?.focus(),50);
+}
+
+function saveSmMarker(id,xPct,yPct) {
+  const label=document.getElementById('sm-label')?.value?.trim();
+  if(!label) return toast('Label is required','error');
+  const p=getProject();
+  if(!p.siteMap) p.siteMap={data:null,markers:[]};
+  if(!p.siteMap.markers) p.siteMap.markers=[];
+  const data={
+    label, type:document.getElementById('sm-type')?.value||'room',
+    color:document.getElementById('sm-color')?.value||'#00c8ff',
+    rackId:document.getElementById('sm-rack')?.value||null,
+  };
+  if(id){
+    const idx=p.siteMap.markers.findIndex(x=>x.id===id);
+    if(idx>=0) Object.assign(p.siteMap.markers[idx],data);
+  } else {
+    p.siteMap.markers.push({id:genId(),x:parseFloat(xPct),y:parseFloat(yPct),...data});
+    logChange(`Site map marker added: ${label}`);
+  }
+  save(); closeModal(); renderSiteMap(); toast(id?'Marker updated':'Marker added','success');
+}
+
+function deleteSmMarker(id) {
+  const p=getProject();
+  p.siteMap.markers=(p.siteMap.markers||[]).filter(x=>x.id!==id);
+  logChange('Site map marker deleted');
+  save(); renderSiteMap();
+}
+
+function smMarkerClick(id) {
+  const p=getProject();
+  const m=(p.siteMap?.markers||[]).find(x=>x.id===id);
+  if(!m) return;
+  const rack=m.rackId?p.racks.find(r=>r.id===m.rackId):null;
+  openModal(`
+    <h3 style="margin-bottom:8px">${esc(m.label)}</h3>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${rack?`<button class="btn btn-ghost" onclick="closeModal();viewRackFromDash('${rack.id}')">View Rack →</button>`:''}
+      <button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>
+    </div>`);
+}
 
 function renderLog() {
   const p = getProject();
