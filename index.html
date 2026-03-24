@@ -498,9 +498,12 @@
   .cable-type-badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-family: var(--mono); background: var(--card2); border: 1px solid var(--border2); color: var(--text2); }
   /* ─── SITE MAP ─── */
   .sitemap-canvas { position: relative; overflow: hidden; background: #060d14; border: 1px solid var(--border); border-radius: 8px; touch-action: none; }
-  .sitemap-marker { position: absolute; transform: translate(-50%, -100%); cursor: pointer; z-index: 10; display: flex; flex-direction: column; align-items: center; }
+  .sitemap-canvas.edit-mode { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(255,170,0,.2); }
+  .sitemap-marker { position: absolute; transform: translate(-50%, -100%); cursor: pointer; z-index: 10; display: flex; flex-direction: column; align-items: center; transform-origin: bottom center; }
   .sitemap-pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); box-shadow: 0 2px 8px rgba(0,0,0,.5); }
   .sitemap-label { font-size: 10px; font-family: var(--mono); background: rgba(0,0,0,.75); color: #fff; padding: 1px 5px; border-radius: 3px; margin-bottom: 2px; white-space: nowrap; }
+  .sm-edit-badge { position: absolute; top: 8px; left: 8px; background: rgba(255,170,0,.9); color: #000; font-size: 10px; font-weight: 700; font-family: var(--mono); padding: 3px 8px; border-radius: 4px; z-index: 20; pointer-events: none; }
+  .sm-drawing-hint { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.8); color: var(--accent); font-size: 11px; font-family: var(--mono); padding: 4px 10px; border-radius: 4px; z-index: 20; pointer-events: none; white-space: nowrap; }
   /* ─── AMBER TOAST ─── */
   #toast.warning { border-color: var(--amber); color: var(--amber); }
   /* ─── TIMER TOPBAR ─── */
@@ -758,7 +761,8 @@ function migrateProject(p) {
   // Feature 12: Locations
   if (!p.locations) p.locations = [];
   // Feature 13: Site Map
-  if (!p.siteMap) p.siteMap = { data: null, markers: [] };
+  if (!p.siteMap) p.siteMap = { data: null, markers: [], cableLines: [] };
+  if (!p.siteMap.cableLines) p.siteMap.cableLines = [];
   p.devices.forEach(migrateDevice);
   return p;
 }
@@ -1208,7 +1212,7 @@ function createProject() {
     flowchart: JSON.parse(JSON.stringify(DEFAULT_FLOWCHART)),
     fcNodePositions: {},
     vendors: [], checklist: getDefaultChecklist(), timeLog: [],
-    cableRuns: [], locations: [], siteMap: { data: null, markers: [] }
+    cableRuns: [], locations: [], siteMap: { data: null, markers: [], cableLines: [] }
   };
   state.projects.push(p);
   save();
@@ -3668,7 +3672,8 @@ function buildRackHTML(rack, p) {
       <div class="rack-slot ${dev?'occupied':''}" id="slot-${rack.id}-${u}" ${slotH}
            ondragover="onSlotDragOver(event,'${rack.id}',${u})"
            ondragleave="onSlotDragLeave(event)"
-           ondrop="onSlotDrop(event,'${rack.id}',${u})">
+           ondrop="onSlotDrop(event,'${rack.id}',${u})"
+           ${!dev ? `ondblclick="addDeviceToRack('${rack.id}',${u})" title="Double-click to add device at U${u}"` : ''}>
         ${dev ? `
           ${dev.status ? `<span class="status-dot-rack" style="background:${STATUS_COLORS[dev.status]||'#778899'}" title="${esc(STATUS_LABELS[dev.status]||dev.status)}"></span>` : ''}
           <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP?'min-width:90px;max-width:90px;':''}flex-shrink:0"
@@ -3849,6 +3854,65 @@ function removeFromRack(deviceId, e) {
     dev.rackId = null; dev.rackU = null;
   }
   save(); renderRacks();
+}
+
+let _pendingRackAssign = null;
+
+function addDeviceToRack(rackId, u) {
+  _pendingRackAssign = { rackId, u };
+  const typeOpts = ['Switch','Router','Firewall','Server','NAS','APC/UPS','Patch Panel','Misc Rack-Mounted','Modem','Access Control']
+    .map(t => `<option value="${t}">${t}</option>`).join('');
+  openModal(`
+    <h3>Add Device at U${u}</h3>
+    <div class="form-row">
+      <label>Device Name *</label>
+      <input class="form-control" id="rsd-name" placeholder="e.g. SW-01" autofocus>
+    </div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Device Type</label>
+        <select class="form-control" id="rsd-type">${typeOpts}</select>
+      </div>
+      <div class="form-row" style="flex:0 0 80px"><label>U Height</label>
+        <select class="form-control" id="rsd-uheight">
+          ${[1,2,3,4,6,8].map(n=>`<option value="${n}">${n}U</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDeviceToRack()">Add Device</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('rsd-name')?.focus(), 50);
+}
+
+function saveDeviceToRack() {
+  const name = document.getElementById('rsd-name')?.value?.trim();
+  if (!name) return toast('Device name is required', 'error');
+  const type = document.getElementById('rsd-type')?.value || 'Misc Rack-Mounted';
+  const uheight = parseInt(document.getElementById('rsd-uheight')?.value) || 1;
+  const { rackId, u } = _pendingRackAssign || {};
+  if (!rackId) return;
+  const p = getProject();
+  // Check slot is still free
+  if (p.devices.find(d => d.rackId === rackId && d.rackU === u)) {
+    return toast('That slot is already occupied', 'error');
+  }
+  const dev = {
+    id: genId(), name, deviceType: type,
+    type: type === 'Switch' ? 'switching' : 'non-switching',
+    ip: '', mac: '', manufacturer: '', model: '', notes: '',
+    ports: type === 'Switch' ? 24 : type === 'Patch Panel' ? 24 : 0,
+    deviceUHeight: uheight, rackId, rackU: u,
+    portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
+    webUser: '', webPassword: '', webProtocol: 'https', parentDeviceId: '',
+    status: '', serial: '', warrantyExpiry: '', eolDate: ''
+  };
+  p.devices.push(dev);
+  logChange(`Device added to rack at U${u}: ${name}`);
+  save(); closeModal(); renderRacks();
+  toast(`"${name}" added at U${u} — double-click it to edit details`, 'success');
+  _pendingRackAssign = null;
 }
 
 function addRack() { openRackModal(null); }
@@ -4121,6 +4185,7 @@ function assignPort(switchId, portNum) {
       </label>
     </div>` : ''}
     <div class="modal-actions">
+      ${currDev ? `<button class="btn btn-ghost btn-sm" onclick="closeModal();editDevice('${currDev.id}')" style="margin-right:auto" title="Open full device settings">⇢ ${esc(currDev.name)}</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="savePort('${switchId}',${portNum})">Save</button>
     </div>`);
@@ -6869,13 +6934,27 @@ function deleteLocation(id) {
 //  FEATURE 13: SITE MAP
 // ═══════════════════════════════════════════
 let _smPan={x:0,y:0},_smZoom=1,_smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0};
+let _smOverlay='markers'; // 'markers' | 'cableruns'
+let _smEditMode=false;
+let _smDrawing=false;
+let _smCurrentLine=null; // {points:[{x,y}...], color, label}
 
 function renderSiteMap() {
   const p = getProject();
-  if (!p.siteMap) p.siteMap={data:null,markers:[]};
+  if (!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
+  if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
+
   setTopbarActions(`
+    <select class="form-control" style="width:160px;padding:4px 8px;font-size:12px" onchange="smSetOverlay(this.value)">
+      <option value="markers" ${_smOverlay==='markers'?'selected':''}>📍 Site Map</option>
+      <option value="cableruns" ${_smOverlay==='cableruns'?'selected':''}>⇄ Cable Runs</option>
+    </select>
+    <button class="btn btn-sm ${_smEditMode?'btn-primary':'btn-ghost'}" onclick="smToggleEdit()"
+      style="${_smEditMode?'border-color:var(--amber);background:rgba(255,170,0,.15);color:var(--amber)':''}"
+      title="${_smEditMode?'Click to exit edit mode':'Click to enable edit mode'}">
+      ${_smEditMode?'🔓 Edit Mode ON':'🔒 View Only'}
+    </button>
     ${p.siteMap.data?`<button class="btn btn-ghost btn-sm" onclick="clearSiteMap()">✕ Clear Map</button>`:''}
-    <button class="btn btn-ghost btn-sm" onclick="addSiteMapMarker()">+ Add Marker</button>
     ${!p.siteMap.data?`<label class="btn btn-primary btn-sm" style="cursor:pointer">📁 Upload Floor Plan<input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)"></label>`:''}
   `);
 
@@ -6895,21 +6974,57 @@ function renderSiteMap() {
   }
 
   const markers = p.siteMap.markers||[];
+  const cableLines = p.siteMap.cableLines||[];
+  const isMarkers = _smOverlay==='markers';
+  const canEdit = _smEditMode;
+
+  // Build SVG cable lines layer
+  const svgLines = cableLines.map(line => {
+    if (!line.points || line.points.length < 2) return '';
+    const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
+    const color = line.color || '#ffaa00';
+    return `<g onclick="event.stopPropagation();smCableLineClick('${line.id}')" style="cursor:pointer">
+      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
+      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
+      ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="3" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1" pointer-events="none">${esc(line.label)}</text>`; })() : ''}
+    </g>`;
+  }).join('');
+
+  // Build in-progress drawing line
+  const drawingLine = (_smDrawing && _smCurrentLine && _smCurrentLine.points.length > 0) ? (() => {
+    const pts = _smCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
+    return `<path d="${pts}" stroke="${_smCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
+  })() : '';
+
+  // Cursor based on mode
+  const cursor = !canEdit ? 'grab' : isMarkers ? 'crosshair' : (_smDrawing ? 'crosshair' : 'crosshair');
+
   document.getElementById('view-area').innerHTML = `
-    <div style="display:flex;gap:14px;height:calc(100vh-130px)">
+    <div style="display:flex;gap:14px;height:calc(100vh - 130px)">
       <div style="flex:1;position:relative">
-        <div id="sm-canvas" class="sitemap-canvas" style="width:100%;height:calc(100vh - 150px);cursor:crosshair;user-select:none"
+        ${canEdit ? `<div class="sm-edit-badge">✎ EDIT MODE${!isMarkers ? (_smDrawing ? ' · DRAWING — click to add points, dbl-click to finish' : ' · Click to start a cable run') : ' · Dbl-click map to place marker'}</div>` : ''}
+        ${canEdit && !isMarkers && _smDrawing ? `<div class="sm-drawing-hint">Click: add point &nbsp;|&nbsp; Double-click: finish &nbsp;|&nbsp; ESC: cancel</div>` : ''}
+        <div id="sm-canvas" class="sitemap-canvas ${canEdit?'edit-mode':''}"
+          style="width:100%;height:calc(100vh - 150px);cursor:${cursor};user-select:none"
           onmousedown="smMouseDown(event)" onmousemove="smMouseMove(event)" onmouseup="smMouseUp(event)"
+          onclick="smCanvasClick(event)"
           ondblclick="smDblClick(event)" onwheel="smWheel(event)">
           <div id="sm-pan" style="position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})">
             <img id="sm-img" src="${p.siteMap.data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
+            <svg id="sm-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;pointer-events:none"
+              viewBox="0 0 100 100" preserveAspectRatio="none">
+              ${svgLines}
+              ${drawingLine}
+            </svg>
             <div id="sm-markers" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
-              ${markers.map(m=>`
-                <div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all"
+              ${markers.map(m=>{
+                const sz = m.size||1;
+                return `<div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-100%) scale(${sz});transform-origin:bottom center"
                   title="${esc(m.label)}" onclick="event.stopPropagation();smMarkerClick('${m.id}')">
                   <div class="sitemap-label">${esc(m.label)}</div>
                   <div class="sitemap-pin" style="background:${m.color||'#00c8ff'}"></div>
-                </div>`).join('')}
+                </div>`;
+              }).join('')}
             </div>
           </div>
         </div>
@@ -6919,17 +7034,36 @@ function renderSiteMap() {
           <button class="btn btn-ghost btn-sm" onclick="smResetView()">⟳</button>
         </div>
       </div>
-      <div style="width:200px;flex-shrink:0">
-        <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Markers (${markers.length})</div>
-        ${markers.map(m=>`
-          <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smMarkerClick('${m.id}')">
-            <span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0"></span>
-            <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
-            <button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteSmMarker('${m.id}')" style="font-size:10px;padding:2px 5px">✕</button>
-          </div>`).join('')}
-        ${markers.length===0?`<div style="color:var(--text3);font-size:12px">Double-click the map to place a marker.</div>`:''}
+      <div style="width:210px;flex-shrink:0;overflow-y:auto">
+        ${isMarkers ? `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Markers (${markers.length})</div>
+            ${canEdit?`<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="addSiteMapMarker()">+ Add</button>`:''}
+          </div>
+          ${markers.map(m=>`
+            <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smMarkerClick('${m.id}')">
+              <span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0;transform:scale(${m.size||1})"></span>
+              <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
+              ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteSmMarker('${m.id}')" style="font-size:10px;padding:2px 5px">✕</button>`:''}
+            </div>`).join('')}
+          ${markers.length===0?`<div style="color:var(--text3);font-size:12px">${canEdit?'Double-click the map to place a marker.':'Enable Edit Mode to add markers.'}</div>`:''}
+        ` : `
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Cable Runs (${cableLines.length})</div>
+            ${canEdit&&!_smDrawing?`<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="smStartCableLine()">+ Draw</button>`:''}
+            ${canEdit&&_smDrawing?`<button class="btn btn-danger btn-sm" style="font-size:10px;padding:2px 8px" onclick="smCancelCableLine()">Cancel</button>`:''}
+          </div>
+          ${cableLines.map(line=>`
+            <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smCableLineClick('${line.id}')">
+              <span style="width:18px;height:3px;border-radius:2px;background:${line.color||'#ffaa00'};flex-shrink:0"></span>
+              <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(line.label||'Cable Run')}</span>
+              ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();smDeleteCableLine('${line.id}')" style="font-size:10px;padding:2px 5px">✕</button>`:''}
+            </div>`).join('')}
+          ${cableLines.length===0?`<div style="color:var(--text3);font-size:12px">${canEdit?'Click "+ Draw" then click the map to trace a cable run. Double-click to finish.':'Enable Edit Mode to draw cable runs.'}</div>`:''}
+        `}
       </div>
     </div>`;
+}
 }
 
 function uploadSiteMap(e) {
@@ -6988,6 +7122,22 @@ function smResetView(){_smPan={x:0,y:0};_smZoom=1;const pan=document.getElementB
 function smDblClick(e) {
   const p=getProject();
   if(!p.siteMap?.data) return;
+  if(!_smEditMode) return; // view-only mode blocks edits
+  if(_smOverlay==='cableruns') {
+    // Double-click finishes current cable line
+    if(_smDrawing && _smCurrentLine) {
+      const pt = smEventToImgPct(e);
+      if(pt) _smCurrentLine.points.push(pt);
+      smFinishCableLine();
+    } else {
+      // Start a new cable line
+      smStartCableLine();
+      const pt = smEventToImgPct(e);
+      if(pt) _smCurrentLine.points.push(pt);
+    }
+    return;
+  }
+  // Markers overlay: place a marker
   const img=document.getElementById('sm-img');
   if(!img) return;
   const rect=img.getBoundingClientRect();
@@ -7000,11 +7150,160 @@ function addSiteMapMarker() {
   openSmMarkerModal(null,'50','50');
 }
 
+function smSetOverlay(val) { _smOverlay=val; _smDrawing=false; _smCurrentLine=null; renderSiteMap(); }
+function smToggleEdit() { _smEditMode=!_smEditMode; if(!_smEditMode){_smDrawing=false;_smCurrentLine=null;} renderSiteMap(); }
+
+function smCanvasClick(e) {
+  if (!_smEditMode) return;
+  if (_smOverlay!=='cableruns') return;
+  if (!_smDrawing || !_smCurrentLine) return;
+  // Add a point to the current line
+  const pt = smEventToImgPct(e);
+  if (!pt) return;
+  _smCurrentLine.points.push(pt);
+  // Re-render SVG only (lightweight)
+  smRedrawLines();
+}
+
+function smEventToImgPct(e) {
+  const img = document.getElementById('sm-img');
+  if (!img) return null;
+  const rect = img.getBoundingClientRect();
+  const x = parseFloat(((e.clientX - rect.left) / rect.width * 100).toFixed(2));
+  const y = parseFloat(((e.clientY - rect.top) / rect.height * 100).toFixed(2));
+  return { x, y };
+}
+
+function smRedrawLines() {
+  // Lightweight re-render of just the SVG layer
+  const p = getProject();
+  const cableLines = p.siteMap?.cableLines||[];
+  const svgLines = cableLines.map(line => {
+    if (!line.points || line.points.length < 2) return '';
+    const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
+    const color = line.color || '#ffaa00';
+    return `<g onclick="event.stopPropagation();smCableLineClick('${line.id}')" style="cursor:pointer">
+      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
+      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
+      ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="3" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1">${esc(line.label)}</text>`; })() : ''}
+    </g>`;
+  }).join('');
+  const drawingLine = (_smDrawing && _smCurrentLine && _smCurrentLine.points.length > 0) ? (() => {
+    const pts = _smCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
+    return `<path d="${pts}" stroke="${_smCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
+  })() : '';
+  const svg = document.getElementById('sm-svg');
+  if (svg) svg.innerHTML = svgLines + drawingLine;
+}
+
+function smStartCableLine() {
+  _smDrawing = true;
+  _smCurrentLine = { points: [], color: '#ffaa00', label: '' };
+  renderSiteMap();
+}
+
+function smCancelCableLine() {
+  _smDrawing = false;
+  _smCurrentLine = null;
+  renderSiteMap();
+}
+
+function smFinishCableLine() {
+  if (!_smCurrentLine || _smCurrentLine.points.length < 2) {
+    toast('Draw at least 2 points to create a cable run', 'error');
+    return;
+  }
+  const line = { ..._smCurrentLine };
+  _smDrawing = false;
+  _smCurrentLine = null;
+  // Ask for label and color
+  openModal(`
+    <h3>Save Cable Run</h3>
+    <div class="form-row"><label>Label</label>
+      <input class="form-control" id="scl-label" placeholder="e.g. MDF to IDF-166" value="${esc(line.label||'')}" autofocus></div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Color</label>
+        <input type="color" class="form-control" id="scl-color" value="${line.color||'#ffaa00'}" style="height:38px;padding:4px"></div>
+      <div class="form-row"><label>Cable Type</label>
+        <select class="form-control" id="scl-type">
+          ${['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'].map(t=>`<option>${t}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal();renderSiteMap()">Discard</button>
+      <button class="btn btn-primary" onclick="smSaveCableLine(${JSON.stringify(line).split('"').join('&quot;')})">Save Run</button>
+    </div>
+  `);
+  setTimeout(()=>document.getElementById('scl-label')?.focus(),50);
+  // Store pending line in a temp variable to avoid JSON escaping issues
+  window._smPendingLine = line;
+}
+
+function smSaveCableLine() {
+  const line = window._smPendingLine;
+  if (!line) return;
+  const label = document.getElementById('scl-label')?.value?.trim()||'';
+  const color = document.getElementById('scl-color')?.value||'#ffaa00';
+  const cableType = document.getElementById('scl-type')?.value||'';
+  const p = getProject();
+  if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
+  p.siteMap.cableLines.push({ id:genId(), points:line.points, label, color, cableType });
+  logChange(`Site map cable run added: ${label||'(unlabeled)'}`);
+  save(); closeModal(); window._smPendingLine=null; renderSiteMap();
+  toast('Cable run saved','success');
+}
+
+function smCableLineClick(id) {
+  if (!_smEditMode) return;
+  const p = getProject();
+  const line = (p.siteMap?.cableLines||[]).find(l=>l.id===id);
+  if (!line) return;
+  openModal(`
+    <h3>Edit Cable Run</h3>
+    <div class="form-row"><label>Label</label>
+      <input class="form-control" id="ecl-label" value="${esc(line.label||'')}" autofocus></div>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Color</label>
+        <input type="color" class="form-control" id="ecl-color" value="${line.color||'#ffaa00'}" style="height:38px;padding:4px"></div>
+      <div class="form-row"><label>Type</label>
+        <select class="form-control" id="ecl-type">
+          ${['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'].map(t=>`<option ${line.cableType===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+    </div>
+    <p style="font-size:11px;color:var(--text3)">${line.points.length} points</p>
+    <div class="modal-actions">
+      <button class="btn btn-danger btn-sm" onclick="smDeleteCableLine('${id}')" style="margin-right:auto">Delete</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smUpdateCableLine('${id}')">Save</button>
+    </div>
+  `);
+  setTimeout(()=>document.getElementById('ecl-label')?.focus(),50);
+}
+
+function smUpdateCableLine(id) {
+  const p = getProject();
+  const line = (p.siteMap?.cableLines||[]).find(l=>l.id===id);
+  if (!line) return;
+  line.label = document.getElementById('ecl-label')?.value?.trim()||'';
+  line.color = document.getElementById('ecl-color')?.value||'#ffaa00';
+  line.cableType = document.getElementById('ecl-type')?.value||'';
+  save(); closeModal(); renderSiteMap(); toast('Cable run updated','success');
+}
+
+function smDeleteCableLine(id) {
+  const p = getProject();
+  if (!p.siteMap?.cableLines) return;
+  p.siteMap.cableLines = p.siteMap.cableLines.filter(l=>l.id!==id);
+  logChange('Site map cable run deleted');
+  save(); closeModal(); renderSiteMap();
+}
+
 function openSmMarkerModal(id,xPct,yPct) {
   const p=getProject();
   const m=id?(p.siteMap?.markers||[]).find(x=>x.id===id):null;
   const rackOpts=`<option value="">— None —</option>`+
     p.racks.map(r=>`<option value="${r.id}" ${m?.rackId===r.id?'selected':''}>${esc(r.name)}</option>`).join('');
+  const sz = m?.size||1;
   openModal(`
     <h3>${id?'Edit':'Place'} Marker</h3>
     <div class="form-row"><label>Label *</label>
@@ -7019,9 +7318,18 @@ function openSmMarkerModal(id,xPct,yPct) {
       <div class="form-row"><label>Color</label>
         <input type="color" class="form-control" id="sm-color" value="${m?.color||'#00c8ff'}" style="height:38px;padding:4px"></div>
     </div>
+    <div class="form-row">
+      <label>Marker Size</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="sm-size" min="0.5" max="3" step="0.1" value="${sz}" style="flex:1;accent-color:var(--accent)"
+          oninput="document.getElementById('sm-size-lbl').textContent=Math.round(this.value*100)+'%'">
+        <span id="sm-size-lbl" style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:36px">${Math.round(sz*100)}%</span>
+      </div>
+    </div>
     <div class="form-row"><label>Linked Rack (optional)</label>
       <select class="form-control" id="sm-rack">${rackOpts}</select></div>
     <div class="modal-actions">
+      ${id?`<button class="btn btn-danger btn-sm" onclick="deleteSmMarker('${id}')" style="margin-right:auto">Delete</button>`:''}
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveSmMarker('${id||''}','${xPct||50}','${yPct||50}')">Save</button>
     </div>`);
@@ -7032,16 +7340,18 @@ function saveSmMarker(id,xPct,yPct) {
   const label=document.getElementById('sm-label')?.value?.trim();
   if(!label) return toast('Label is required','error');
   const p=getProject();
-  if(!p.siteMap) p.siteMap={data:null,markers:[]};
+  if(!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
   if(!p.siteMap.markers) p.siteMap.markers=[];
   const data={
     label, type:document.getElementById('sm-type')?.value||'room',
     color:document.getElementById('sm-color')?.value||'#00c8ff',
+    size:parseFloat(document.getElementById('sm-size')?.value||1),
     rackId:document.getElementById('sm-rack')?.value||null,
   };
   if(id){
     const idx=p.siteMap.markers.findIndex(x=>x.id===id);
     if(idx>=0) Object.assign(p.siteMap.markers[idx],data);
+    logChange(`Site map marker updated: ${label}`);
   } else {
     p.siteMap.markers.push({id:genId(),x:parseFloat(xPct),y:parseFloat(yPct),...data});
     logChange(`Site map marker added: ${label}`);
@@ -7063,11 +7373,11 @@ function smMarkerClick(id) {
   const rack=m.rackId?p.racks.find(r=>r.id===m.rackId):null;
   openModal(`
     <h3 style="margin-bottom:8px">${esc(m.label)}</h3>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''} · Size: ${Math.round((m.size||1)*100)}%</div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       ${rack?`<button class="btn btn-ghost" onclick="closeModal();viewRackFromDash('${rack.id}')">View Rack →</button>`:''}
-      <button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>
+      ${_smEditMode?`<button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>`:''}
     </div>`);
 }
 
