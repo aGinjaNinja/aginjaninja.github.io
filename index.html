@@ -3413,7 +3413,9 @@ function quickAddDevice(tplOrIdx) {
         <input class="form-control" id="qt-mfr" placeholder="Cisco, HP, etc."></div>
       <div class="form-row"><label>Model <span style="color:var(--text3);font-weight:400">(opt.)</span></label>
         <input class="form-control" id="qt-model" value="${esc(tpl.model||'')}"></div>
-    </div>`}
+    </div>
+    <div class="form-row"><label>MAC Address <span style="color:var(--text3);font-weight:400">(opt.)</span></label>
+      <input class="form-control" id="qt-mac" placeholder="00:11:22:33:44:55"></div>`}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveQuickDevice()">Add to Pool</button>
@@ -3443,11 +3445,12 @@ function saveQuickDevice() {
   } else {
     const mfr = document.getElementById('qt-mfr')?.value?.trim() || '';
     const model = document.getElementById('qt-model')?.value?.trim() || tpl.model || '';
+    const mac = document.getElementById('qt-mac')?.value?.trim() || '';
     dev = {
       id: genId(), name,
       deviceType: tpl.deviceType || 'Misc.',
       type: tpl.deviceType === 'Switch' ? 'switching' : 'non-switching',
-      ip: '', mac: '', manufacturer: mfr, model, notes: '',
+      ip: '', mac, manufacturer: mfr, model, notes: '',
       ports: tpl.ports || 0,
       deviceUHeight: tpl.deviceUHeight || 1,
       rackId: null, rackU: null,
