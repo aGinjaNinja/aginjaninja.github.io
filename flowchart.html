@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.4, maximum-scale=5.0">
+<title>Van Nice Site Manager</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="screen-app" class="screen active" style="display:flex">
+  <div class="sidebar" id="sidebar-container"></div>
+  <div class="main">
+    <div class="topbar">
+      <button class="sidebar-toggle" id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Toggle menu">&#9776;</button>
+      <h2 id="view-title">Dashboard</h2>
+      <div id="topbar-actions"></div>
+    </div>
+    <div class="view-area" id="view-area"></div>
+  </div>
+</div>
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+<div id="rack-port-tooltip"></div>
+<div id="toast"></div>
+<input type="file" id="import-input" accept=".json" style="display:none" onchange="handleImport(event)">
+<script src="js/core.js"></script>
+<script src="js/gdrive.js"></script>
+<script src="js/layout.js"></script>
+<script src="js/devices.js"></script>
+<script src="js/flowchart.js"></script>
+<script>
+  (async () => {
+    await initPage('flowchart');
+    renderFlowchart();
+  })();
+</script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</body>
+</html>
