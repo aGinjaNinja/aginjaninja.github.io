@@ -784,24 +784,37 @@ function showImportReviewNamed(candidates, sourceName) {
 
 async function commitImportReview() {
   const p = getProject();
+  if (!p) { toast('No project open', 'error'); return; }
   const toImport = _reviewCandidates.filter(c => c._selected);
   if (toImport.length === 0) { toast('No devices selected', 'error'); return; }
   let added = 0;
   toImport.forEach(c => {
-    const { _rid, _selected, ...dev } = c;
+    const { _rid, _selected, type, ...dev } = c;
     // Skip if IP already exists
     if (dev.ip && p.devices.find(d => d.ip === dev.ip)) return;
     if (!dev.addedDate) dev.addedDate = new Date().toISOString();
     p.devices.push(dev);
     added++;
   });
-  // Await IDB write before navigating — page reload reads from IDB
+  if (added === 0) {
+    closeModal();
+    document.getElementById('modal-content').classList.remove('modal-wide');
+    toast('All devices already exist (duplicate IPs)', 'error');
+    return;
+  }
+  // Save to IDB, then render in place — avoids page-navigation race conditions
   await _idbSaveProject(p);
   save();
   closeModal();
   document.getElementById('modal-content').classList.remove('modal-wide');
   toast(`Imported ${added} device${added!==1?'s':''}`, 'success');
-  setView('devices');
+  // Render devices directly instead of navigating — data is already in memory
+  state.currentView = 'devices';
+  const title = document.getElementById('view-title');
+  if (title) title.textContent = 'Devices';
+  const sidebar = document.getElementById('sidebar-container');
+  if (sidebar && typeof buildSidebar === 'function') sidebar.innerHTML = buildSidebar('devices');
+  renderDevices();
 }
 
 function openDeviceModal(id) {
