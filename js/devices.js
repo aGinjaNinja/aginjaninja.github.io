@@ -201,6 +201,7 @@ function renderDevices(preserveSearch) {
           <span style="color:var(--text3)">⌕</span>
           <input id="device-search-input" placeholder="Search devices & panels..." value="${esc(prevSearch)}" oninput="deviceSearchInput(this.value)">
         </div>
+        <button class="btn btn-ghost btn-sm" onclick="bulkSelectNoMac()" title="Select all devices missing a MAC address" style="white-space:nowrap">Select No MAC</button>
       </div>
       <div style="margin-bottom:8px">${filterTabsHtml}</div>
       ${bulkBar}
@@ -296,6 +297,15 @@ function bulkToggleAll(checked) {
   if (checked) devs.forEach(d => state.selectedDeviceIds.add(d.id));
   else state.selectedDeviceIds = new Set();
   renderDevices();
+}
+
+function bulkSelectNoMac() {
+  const p = getProject();
+  if (!p) return;
+  const devs = p.devices.filter(d => d.deviceType !== 'Patch Panel' && d.deviceType !== 'Fiber Enclosure' && !d.mac);
+  state.selectedDeviceIds = new Set(devs.map(d => d.id));
+  renderDevices();
+  toast(`Selected ${devs.length} device${devs.length!==1?'s':''} without MAC`);
 }
 
 function bulkToggleOne(id, checked) {
