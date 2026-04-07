@@ -782,20 +782,25 @@ function showImportReviewNamed(candidates, sourceName) {
   showImportReview(candidates, sourceName);
 }
 
-function commitImportReview() {
+async function commitImportReview() {
   const p = getProject();
   const toImport = _reviewCandidates.filter(c => c._selected);
   if (toImport.length === 0) { toast('No devices selected', 'error'); return; }
+  let added = 0;
   toImport.forEach(c => {
     const { _rid, _selected, ...dev } = c;
     // Skip if IP already exists
     if (dev.ip && p.devices.find(d => d.ip === dev.ip)) return;
     if (!dev.addedDate) dev.addedDate = new Date().toISOString();
     p.devices.push(dev);
+    added++;
   });
-  save(); closeModal();
+  // Await IDB write before navigating — page reload reads from IDB
+  await _idbSaveProject(p);
+  save();
+  closeModal();
   document.getElementById('modal-content').classList.remove('modal-wide');
-  toast(`Imported ${toImport.length} device${toImport.length!==1?'s':''}`, 'success');
+  toast(`Imported ${added} device${added!==1?'s':''}`, 'success');
   setView('devices');
 }
 
