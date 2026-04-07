@@ -302,7 +302,7 @@ function bulkToggleAll(checked) {
 function bulkSelectNoMac() {
   const p = getProject();
   if (!p) return;
-  const devs = p.devices.filter(d => d.deviceType !== 'Patch Panel' && d.deviceType !== 'Fiber Enclosure' && !d.mac);
+  const devs = p.devices.filter(d => d.deviceType !== 'Patch Panel' && d.deviceType !== 'Fiber Enclosure' && (!d.mac || d.mac.trim().toLowerCase() === '[n/a]'));
   state.selectedDeviceIds = new Set(devs.map(d => d.id));
   renderDevices();
   toast(`Selected ${devs.length} device${devs.length!==1?'s':''} without MAC`);
