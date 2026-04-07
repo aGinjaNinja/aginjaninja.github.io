@@ -479,7 +479,7 @@ function bulkAssignSwitch() {
           const isAP = dt === 'AP';
           const used = Object.keys(s.portAssignments||{}).length;
           const free = isAP ? '—' : `${(s.ports||0) - used} port${(s.ports||0)-used!==1?'s':''} free`;
-          return `<option value="${s.id}">${esc(s.name)} (${dt}) — ${free}</option>`;
+          return `<option value="${s.id}">${esc(s.name)}${s.ip?' · '+esc(s.ip):''}${s.mac?' · '+esc(s.mac):''} (${dt}) — ${free}</option>`;
         }).join('')}
       </select>
     </div>
@@ -840,7 +840,7 @@ function openDeviceModal(id) {
   // Parent device options: switches and APs that aren't this device
   const parentables = p.devices.filter(x => x.id !== id && (x.deviceType === 'Switch' || x.deviceType === 'AP' || PORT_CAPABLE.has(x.deviceType||'')));
   const parentOpts = `<option value="">— None —</option>` +
-    parentables.map(x => `<option value="${x.id}" ${d?.parentDeviceId===x.id?'selected':''}>${esc(x.name)} (${esc(x.deviceType||'Misc.')})</option>`).join('');
+    parentables.map(x => `<option value="${x.id}" ${d?.parentDeviceId===x.id?'selected':''}>${esc(x.name)}${x.ip?' · '+esc(x.ip):''}${x.mac?' · '+esc(x.mac):''} (${esc(x.deviceType||'Misc.')})</option>`).join('');
   const statusOpts = [
     { v:'', label:'— No Status —', color:'var(--text2)' },
     { v:'verified', label:'✓ Verified', color:'#00e87a' },

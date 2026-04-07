@@ -193,7 +193,7 @@ function assignPort(switchId, portNum) {
           return sorted.map(type => {
             const devs = byType[type].sort((a,b) => (a.name||'').localeCompare(b.name||''));
             return `<optgroup label="${esc(type)}">` +
-              devs.map(d => `<option value="${d.id}" ${d.id===curr?'selected':''}>${esc(d.name)}${d.ip?' · '+esc(d.ip):''}</option>`).join('') +
+              devs.map(d => `<option value="${d.id}" ${d.id===curr?'selected':''}>${esc(d.name)}${d.ip?' · '+esc(d.ip):''}${d.mac?' · '+esc(d.mac):''}</option>`).join('') +
               `</optgroup>`;
           }).join('');
         })()}
