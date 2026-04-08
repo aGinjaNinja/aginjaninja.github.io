@@ -670,7 +670,6 @@ function openFiberEnclosureModal(id) {
       <label>Fiber Pair Labels <span style="color:var(--text3);font-weight:400">(destination, strand ID, room, etc.)</span></label>
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="feLabelAutoNumber()" title="Auto-number strands 1–N">Auto-Number</button>
-        <button class="btn btn-ghost btn-sm" onclick="feLabelAutoPair()" title="Label as A1/B1, A2/B2 pairs">Auto-Pair (A/B)</button>
         <button class="btn btn-ghost btn-sm" onclick="feLabelClear()">Clear All</button>
       </div>
       <div id="fe-label-grid">${buildFiberLabelGrid(curPairs, labels)}</div>
@@ -732,16 +731,6 @@ function _feCollectLabels() {
 function feLabelAutoNumber() {
   document.querySelectorAll('.fe-label-input').forEach(inp => {
     inp.value = inp.dataset.pair;
-  });
-}
-
-function feLabelAutoPair() {
-  // A1/B1, A2/B2 pattern — standard fiber duplex labeling
-  document.querySelectorAll('.fe-label-input').forEach(inp => {
-    const n = parseInt(inp.dataset.pair);
-    const pairNum = Math.ceil(n / 2);
-    const strand = n % 2 === 1 ? 'A' : 'B';
-    inp.value = `${strand}${pairNum}`;
   });
 }
 
