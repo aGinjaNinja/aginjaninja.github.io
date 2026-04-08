@@ -159,12 +159,36 @@ function buildPatchPanelFaceplate(dev, p) {
   return `<div class="pp-faceplate">${rowsHtml}</div>`;
 }
 
+function buildFiberEnclosureFaceplate(dev) {
+  const pairs = dev.fiberPairs || 6;
+  const labels = dev.fiberLabels || {};
+  const c = dtColor('Fiber Enclosure');
+  const PAIRS_PER_ROW = 6;
+  const pairEls = [];
+  for (let i = 1; i <= pairs; i++) {
+    const label = labels[i] || '';
+    const title = label ? `Pair ${i}: ${label}` : `Pair ${i}`;
+    pairEls.push(`<div class="fe-pair" title="${esc(title)}">
+      <div class="fe-pair-num">${i}</div>
+      <div class="fe-pair-strand" style="background:${c}"></div>
+      ${label ? `<div class="fe-pair-label">${esc(label.length > 5 ? label.slice(0,4)+'…' : label)}</div>` : ''}
+    </div>`);
+  }
+  let rowsHtml = '';
+  for (let r = 0; r < pairEls.length; r += PAIRS_PER_ROW) {
+    rowsHtml += `<div class="fe-row">${pairEls.slice(r, r + PAIRS_PER_ROW).join('')}</div>`;
+  }
+  return `<div class="fe-faceplate">${rowsHtml}</div>`;
+}
+
 function buildRackHTML(rack, p) {
+  const isAsc = rack.uDirection === 'asc';
+  const dirLabel = isAsc ? '↑ U1 Bottom' : '↓ U1 Top';
   let html = `<div class="rack-container" id="rack-${rack.id}">
     <div class="rack-header">
       <div class="rack-header-left">
         <h3>${esc(rack.name)}</h3>
-        <p>${esc(rack.location||'No location')} &nbsp;·&nbsp; ${rack.uHeight}U</p>
+        <p>${esc(rack.location||'No location')} &nbsp;·&nbsp; ${rack.uHeight}U &nbsp;·&nbsp; <span style="font-size:10px;color:var(--text3)">${dirLabel}</span></p>
       </div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost btn-sm btn-icon" onclick="editRack('${rack.id}')" title="Edit rack">✎</button>
@@ -172,7 +196,14 @@ function buildRackHTML(rack, p) {
       </div>
     </div>
     <div class="rack-body">`;
-  for (let u = 1; u <= rack.uHeight; u++) {
+  // Build U iteration order: ascending = U shown high-to-low (uHeight at top, 1 at bottom)
+  const uOrder = [];
+  if (isAsc) {
+    for (let u = rack.uHeight; u >= 1; u--) uOrder.push(u);
+  } else {
+    for (let u = 1; u <= rack.uHeight; u++) uOrder.push(u);
+  }
+  for (const u of uOrder) {
     const dev = p.devices.find(d => d.rackId === rack.id && d.rackU === u);
     const dc = dev ? dtColor(dev.deviceType||'Misc.') : '';
     const uh = dev ? Math.max(1, dev.deviceUHeight || 1) : 1;
@@ -182,6 +213,7 @@ function buildRackHTML(rack, p) {
     );
     if (isContinuation) continue;
     const isPP = dev && dev.deviceType === 'Patch Panel';
+    const isFE = dev && dev.deviceType === 'Fiber Enclosure';
     // Patch panels: fixed 12 ports per row, each row ~32px tall + 3px gap, 8px padding top+bottom
     const ppRows = isPP ? Math.ceil((dev.ports||24) / 12) : 0;
     const ppNaturalH = isPP ? ppRows * 32 + (ppRows - 1) * 3 + 8 : 0;
@@ -199,7 +231,7 @@ function buildRackHTML(rack, p) {
            ${!dev ? `ondblclick="addDeviceToRack('${rack.id}',${u})" title="Double-click to add device at U${u}"` : ''}>
         ${dev ? `
           ${dev.status ? `<span class="status-dot-rack" style="background:${STATUS_COLORS[dev.status]||'#778899'}" title="${esc(STATUS_LABELS[dev.status]||dev.status)}"></span>` : ''}
-          <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP?'min-width:90px;max-width:90px;':''}flex-shrink:0"
+          <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP||isFE?'min-width:90px;max-width:90px;':''}flex-shrink:0"
                draggable="true"
                ondblclick="event.stopPropagation();editDevice('${dev.id}')"
                ondragstart="onDragStart(event,'${dev.id}','${rack.id}')"
@@ -207,7 +239,7 @@ function buildRackHTML(rack, p) {
             <span style="width:8px;height:8px;border-radius:50%;background:${dc};flex-shrink:0"></span>
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(dev.name)}</span>
           </div>
-          ${isPP ? buildPatchPanelFaceplate(dev, p) : buildRackPortSquares(dev, p)}
+          ${isPP ? buildPatchPanelFaceplate(dev, p) : isFE ? buildFiberEnclosureFaceplate(dev) : buildRackPortSquares(dev, p)}
           <button class="slot-remove" onclick="removeFromRack('${dev.id}',event)" title="Remove from rack">✕</button>
         ` : ''}
       </div>
@@ -449,6 +481,7 @@ function openRackModal(id) {
   const p = getProject();
   const r = id ? p.racks.find(x => x.id === id) : null;
   const isNew = !r;
+  const curDir = r?.uDirection || 'desc';
   openModal(`
     <h3>${isNew ? 'New Rack' : 'Edit Rack'}</h3>
     <div class="form-row"><label>Rack Name *</label>
@@ -458,6 +491,13 @@ function openRackModal(id) {
         <input class="form-control" id="r-height" type="number" min="4" max="56" value="${r?.uHeight||42}" placeholder="42"></div>
       <div class="form-row"><label>Location</label>
         <input class="form-control" id="r-loc" value="${esc(r?.location||'')}" placeholder="Server Room A"></div>
+    </div>
+    <div class="form-row"><label>U Numbering Direction</label>
+      <select class="form-control" id="r-udir">
+        <option value="desc" ${curDir==='desc'?'selected':''}>U1 at Top (descending)</option>
+        <option value="asc" ${curDir==='asc'?'selected':''}>U1 at Bottom (ascending)</option>
+      </select>
+      <span style="font-size:10px;color:var(--text3);margin-top:3px;display:block">${curDir === 'asc' ? 'U1 is at the bottom of the rack, numbering goes up' : 'U1 is at the top of the rack, numbering goes down'}</span>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -470,7 +510,8 @@ function saveRack(id) {
   const p = getProject();
   const name = document.getElementById('r-name')?.value?.trim();
   if (!name) return toast('Rack name is required', 'error');
-  const data = { name, uHeight: parseInt(document.getElementById('r-height')?.value)||42, location: document.getElementById('r-loc')?.value?.trim()||'' };
+  const uDirection = document.getElementById('r-udir')?.value || 'desc';
+  const data = { name, uHeight: parseInt(document.getElementById('r-height')?.value)||42, location: document.getElementById('r-loc')?.value?.trim()||'', uDirection };
   if (id) {
     const idx = p.racks.findIndex(r => r.id === id);
     if (idx >= 0) { Object.assign(p.racks[idx], data); logChange(`Rack updated: ${name}`); }

@@ -614,6 +614,7 @@ function openFiberEnclosureModal(id) {
   const isNew = !d;
   const curPairs = d?.fiberPairs || 6;
   const curU = d?.deviceUHeight || 1;
+  const labels = d?.fiberLabels || {};
   const pairOpts = [6,12,18,24,30,36,42,48,54,60,66,72].map(n =>
     `<option value="${n}" ${curPairs===n?'selected':''}>${n} pair</option>`
   ).join('');
@@ -621,6 +622,19 @@ function openFiberEnclosureModal(id) {
   const uOpts = curPairs > 18
     ? `<option value="4" selected>4U</option>`
     : [1,2,3,4].map(u => `<option value="${u}" ${curU===u?'selected':''}>${u}U</option>`).join('');
+  // Build fiber label grid — 6 pairs per row (like a real fiber tray)
+  function buildFiberLabelGrid(pairs, lbls) {
+    let html = '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">';
+    for (let i = 1; i <= pairs; i++) {
+      html += `<div style="text-align:center">
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:1px">${i}</div>
+        <input class="form-control fe-label-input" data-pair="${i}" value="${esc(lbls[i]||'')}"
+          placeholder="—" style="font-size:10px;padding:2px 3px;text-align:center;height:24px;min-width:0">
+      </div>`;
+    }
+    html += '</div>';
+    return html;
+  }
   openModal(`
     <h3>${isNew ? 'Add Fiber Enclosure' : 'Edit Fiber Enclosure'}</h3>
     <div class="form-row"><label>Enclosure Name</label>
@@ -646,6 +660,15 @@ function openFiberEnclosureModal(id) {
     </div>
     <div class="form-row"><label>Notes <span style="color:var(--text3);font-weight:400">(optional)</span></label>
       <textarea class="form-control" id="fe-notes" rows="2" placeholder="e.g. SM fiber from demarc" style="resize:vertical;font-family:inherit">${esc(d?.notes||'')}</textarea></div>
+    <div class="form-row" style="margin-top:8px">
+      <label>Fiber Pair Labels <span style="color:var(--text3);font-weight:400">(destination, strand ID, room, etc.)</span></label>
+      <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="feLabelAutoNumber()" title="Auto-number strands 1–N">Auto-Number</button>
+        <button class="btn btn-ghost btn-sm" onclick="feLabelAutoPair()" title="Label as A1/B1, A2/B2 pairs">Auto-Pair (A/B)</button>
+        <button class="btn btn-ghost btn-sm" onclick="feLabelClear()">Clear All</button>
+      </div>
+      <div id="fe-label-grid">${buildFiberLabelGrid(curPairs, labels)}</div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveFiberEnclosure('${id||''}')">${isNew ? 'Create Enclosure' : 'Save'}</button>
@@ -667,6 +690,51 @@ function onFiberPairsChange() {
     sel.innerHTML = [1,2,3,4].map(u => `<option value="${u}" ${validU===u?'selected':''}>${u}U</option>`).join('');
     if (note) note.style.display = 'none';
   }
+  // Rebuild label grid preserving existing values
+  const grid = document.getElementById('fe-label-grid');
+  if (grid) {
+    const existing = _feCollectLabels();
+    let html = '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">';
+    for (let i = 1; i <= pairs; i++) {
+      html += `<div style="text-align:center">
+        <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:1px">${i}</div>
+        <input class="form-control fe-label-input" data-pair="${i}" value="${esc(existing[i]||'')}"
+          placeholder="—" style="font-size:10px;padding:2px 3px;text-align:center;height:24px;min-width:0">
+      </div>`;
+    }
+    html += '</div>';
+    grid.innerHTML = html;
+  }
+}
+
+function _feCollectLabels() {
+  const labels = {};
+  document.querySelectorAll('.fe-label-input').forEach(inp => {
+    const idx = inp.dataset.pair;
+    const val = inp.value.trim();
+    if (idx && val) labels[idx] = val;
+  });
+  return labels;
+}
+
+function feLabelAutoNumber() {
+  document.querySelectorAll('.fe-label-input').forEach(inp => {
+    inp.value = inp.dataset.pair;
+  });
+}
+
+function feLabelAutoPair() {
+  // A1/B1, A2/B2 pattern — standard fiber duplex labeling
+  document.querySelectorAll('.fe-label-input').forEach(inp => {
+    const n = parseInt(inp.dataset.pair);
+    const pairNum = Math.ceil(n / 2);
+    const strand = n % 2 === 1 ? 'A' : 'B';
+    inp.value = `${strand}${pairNum}`;
+  });
+}
+
+function feLabelClear() {
+  document.querySelectorAll('.fe-label-input').forEach(inp => { inp.value = ''; });
 }
 
 function saveFiberEnclosure(id) {
@@ -678,17 +746,18 @@ function saveFiberEnclosure(id) {
   const manufacturer = document.getElementById('fe-mfr')?.value?.trim() || '';
   const model = document.getElementById('fe-model')?.value?.trim() || '';
   const notes = document.getElementById('fe-notes')?.value?.trim() || '';
+  const fiberLabels = _feCollectLabels();
   if (id) {
     const d = p.devices.find(x => x.id === id);
     if (d) {
-      Object.assign(d, { name, fiberPairs, deviceUHeight, manufacturer, model, notes });
+      Object.assign(d, { name, fiberPairs, deviceUHeight, manufacturer, model, notes, fiberLabels });
       logChange(`Fiber Enclosure updated: ${name} (${fiberPairs} pair, ${deviceUHeight}U)`);
     }
   } else {
     const dev = {
       id: genId(), name, deviceType: 'Fiber Enclosure',
       type: 'non-switching', ip: '', mac: '', manufacturer, model, notes,
-      ports: 0, fiberPairs, deviceUHeight,
+      ports: 0, fiberPairs, deviceUHeight, fiberLabels,
       rackId: null, rackU: null,
       portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
       addedDate: new Date().toISOString()
@@ -755,6 +824,10 @@ function showImportReview(candidates, sourceName) {
       <button class="btn btn-ghost btn-sm" onclick="reviewSelectAll(false)">Deselect All</button>
       <button class="btn btn-ghost btn-sm" onclick="reviewSelectByType('switching')">Select Switches Only</button>
       <button class="btn btn-ghost btn-sm" onclick="reviewSelectByType('non-switching')">Select Devices Only</button>
+      <span style="border-left:1px solid var(--border);margin:0 2px"></span>
+      <button class="btn btn-ghost btn-sm" onclick="reviewSelectByField('mac')" title="Select only devices with a MAC address">Has MAC</button>
+      <button class="btn btn-ghost btn-sm" onclick="reviewSelectByField('ip')" title="Select only devices with an IP address">Has IP</button>
+      <button class="btn btn-ghost btn-sm" onclick="reviewSelectByField('hostname')" title="Select only devices with a real hostname (not just IP)">Has Hostname</button>
     </div>
     <div class="review-table-wrap">
       <table>
@@ -782,6 +855,15 @@ function reviewSelectAll(checked) {
 
 function reviewSelectByType(type) {
   _reviewCandidates.forEach(c => c._selected = c.type === type);
+  showImportReview(_reviewCandidates.map(c => c), _reviewSourceName || 'Import');
+}
+
+function reviewSelectByField(field) {
+  _reviewCandidates.forEach(c => {
+    if (field === 'mac') c._selected = !!(c.mac && c.mac.trim() && c.mac.trim().toLowerCase() !== '[n/a]');
+    else if (field === 'ip') c._selected = !!(c.ip && c.ip.trim());
+    else if (field === 'hostname') c._selected = !!(c.name && c.name.trim() && c.name !== c.ip);
+  });
   showImportReview(_reviewCandidates.map(c => c), _reviewSourceName || 'Import');
 }
 

@@ -87,6 +87,7 @@ function migrateDevice(d) {
   if (!d.addedDate) d.addedDate = '';
   if (d.vendorId === undefined) d.vendorId = '';
   if (d.fiberPairs === undefined) d.fiberPairs = 0;
+  if (!d.fiberLabels) d.fiberLabels = {};
   return d;
 }
 
@@ -140,6 +141,7 @@ function migrateProject(p) {
   if (!p.siteMap.cableLines) p.siteMap.cableLines = [];
   if (!p.customTemplates) p.customTemplates = [];
   if (p.folderId === undefined) p.folderId = '';
+  p.racks.forEach(r => { if (!r.uDirection) r.uDirection = 'desc'; });
   p.devices.forEach(migrateDevice);
   return p;
 }
