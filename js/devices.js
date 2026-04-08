@@ -622,9 +622,15 @@ function openFiberEnclosureModal(id) {
   const uOpts = curPairs > 18
     ? `<option value="4" selected>4U</option>`
     : [1,2,3,4].map(u => `<option value="${u}" ${curU===u?'selected':''}>${u}U</option>`).join('');
-  // Build fiber label grid — 6 pairs per row (like a real fiber tray)
+  // Build fiber label grid — ≤18 pairs: single row; >18: columns of 6
   function buildFiberLabelGrid(pairs, lbls) {
-    let html = '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">';
+    let html;
+    if (pairs <= 18) {
+      html = `<div style="display:grid;grid-template-columns:repeat(${pairs},1fr);gap:4px;overflow-x:auto">`;
+    } else {
+      const cols = Math.ceil(pairs / 6);
+      html = `<div style="display:grid;grid-template-rows:repeat(6,auto);grid-template-columns:repeat(${cols},1fr);grid-auto-flow:column;gap:4px;overflow-x:auto">`;
+    }
     for (let i = 1; i <= pairs; i++) {
       html += `<div style="text-align:center">
         <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:1px">${i}</div>
@@ -694,7 +700,13 @@ function onFiberPairsChange() {
   const grid = document.getElementById('fe-label-grid');
   if (grid) {
     const existing = _feCollectLabels();
-    let html = '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px">';
+    let html;
+    if (pairs <= 18) {
+      html = `<div style="display:grid;grid-template-columns:repeat(${pairs},1fr);gap:4px;overflow-x:auto">`;
+    } else {
+      const cols = Math.ceil(pairs / 6);
+      html = `<div style="display:grid;grid-template-rows:repeat(6,auto);grid-template-columns:repeat(${cols},1fr);grid-auto-flow:column;gap:4px;overflow-x:auto">`;
+    }
     for (let i = 1; i <= pairs; i++) {
       html += `<div style="text-align:center">
         <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-bottom:1px">${i}</div>
