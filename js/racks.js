@@ -164,8 +164,9 @@ function buildFiberEnclosureFaceplate(dev) {
   const c = dtColor('Fiber Enclosure');
   const labeled = Object.keys(dev.fiberLabels || {}).length;
   const labelNote = labeled ? ` · ${labeled} labeled` : '';
-  return `<div style="display:flex;align-items:center;gap:6px;padding:0 8px;flex:1;min-width:0">
+  return `<div style="display:flex;align-items:center;gap:6px;padding:0 8px;flex:1;min-width:0;cursor:pointer" onclick="event.stopPropagation();openFiberEnclosureModal('${dev.id}')" title="Click to edit fiber pairs">
     <span style="font-size:10px;font-family:var(--mono);color:${c}">${pairs} pair${labelNote}</span>
+    <span style="font-size:9px;color:var(--text3)">✎ edit</span>
   </div>`;
 }
 
