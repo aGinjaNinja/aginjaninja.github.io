@@ -161,24 +161,12 @@ function buildPatchPanelFaceplate(dev, p) {
 
 function buildFiberEnclosureFaceplate(dev) {
   const pairs = dev.fiberPairs || 6;
-  const labels = dev.fiberLabels || {};
   const c = dtColor('Fiber Enclosure');
-  const PAIRS_PER_ROW = 6;
-  const pairEls = [];
-  for (let i = 1; i <= pairs; i++) {
-    const label = labels[i] || '';
-    const title = label ? `Pair ${i}: ${label}` : `Pair ${i}`;
-    pairEls.push(`<div class="fe-pair" title="${esc(title)}">
-      <div class="fe-pair-num">${i}</div>
-      <div class="fe-pair-strand" style="background:${c}"></div>
-      ${label ? `<div class="fe-pair-label">${esc(label.length > 5 ? label.slice(0,4)+'…' : label)}</div>` : ''}
-    </div>`);
-  }
-  let rowsHtml = '';
-  for (let r = 0; r < pairEls.length; r += PAIRS_PER_ROW) {
-    rowsHtml += `<div class="fe-row">${pairEls.slice(r, r + PAIRS_PER_ROW).join('')}</div>`;
-  }
-  return `<div class="fe-faceplate">${rowsHtml}</div>`;
+  const labeled = Object.keys(dev.fiberLabels || {}).length;
+  const labelNote = labeled ? ` · ${labeled} labeled` : '';
+  return `<div style="display:flex;align-items:center;gap:6px;padding:0 8px;flex:1;min-width:0">
+    <span style="font-size:10px;font-family:var(--mono);color:${c}">${pairs} pair${labelNote}</span>
+  </div>`;
 }
 
 function buildRackHTML(rack, p) {
@@ -231,7 +219,7 @@ function buildRackHTML(rack, p) {
            ${!dev ? `ondblclick="addDeviceToRack('${rack.id}',${u})" title="Double-click to add device at U${u}"` : ''}>
         ${dev ? `
           ${dev.status ? `<span class="status-dot-rack" style="background:${STATUS_COLORS[dev.status]||'#778899'}" title="${esc(STATUS_LABELS[dev.status]||dev.status)}"></span>` : ''}
-          <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP||isFE?'min-width:90px;max-width:90px;':''}flex-shrink:0"
+          <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP?'min-width:90px;max-width:90px;':''}flex-shrink:0"
                draggable="true"
                ondblclick="event.stopPropagation();editDevice('${dev.id}')"
                ondragstart="onDragStart(event,'${dev.id}','${rack.id}')"
