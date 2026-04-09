@@ -77,14 +77,8 @@ function renderPhotos() {
 
   setTopbarActions(`
     <button class="btn btn-ghost btn-sm" onclick="createPhotoFolder()">📁 New Folder</button>
-    <label class="btn btn-ghost btn-sm" style="cursor:pointer">
-      📷 Add Photos
-      <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
-    </label>
-    <label class="btn btn-primary btn-sm" style="cursor:pointer">
-      📸 Take Photo
-      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="uploadPhotos(event)">
-    </label>
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-upload').click()">📷 Add Photos</button>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('photo-capture').click()">📸 Take Photo</button>
   `);
 
   // Filter photos for current view
@@ -127,10 +121,9 @@ function renderPhotos() {
         <div class="empty-icon">📷</div>
         <h3>No photos yet</h3>
         <p>Upload photos of your network closets, equipment, or cable runs.</p>
-        <label class="btn btn-primary" style="cursor:pointer;margin-top:8px">
+        <button class="btn btn-primary" style="margin-top:8px" onclick="document.getElementById('photo-upload').click()">
           Add First Photo
-          <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
-        </label>
+        </button>
       </div>`;
   } else if (visiblePhotos.length === 0) {
     const folderName = _currentPhotoFolderId === ''
@@ -141,10 +134,9 @@ function renderPhotos() {
         <div class="empty-icon">📁</div>
         <h3>No photos in ${esc(folderName)}</h3>
         <p>Upload photos or move existing photos into this folder.</p>
-        <label class="btn btn-primary" style="cursor:pointer;margin-top:8px">
+        <button class="btn btn-primary" style="margin-top:8px" onclick="document.getElementById('photo-upload').click()">
           Add Photos Here
-          <input type="file" accept="image/*" multiple style="display:none" onchange="uploadPhotos(event)">
-        </label>
+        </button>
       </div>`;
   } else {
     _viewerPhotoIndices = visiblePhotos.map(({ idx }) => idx);
@@ -368,19 +360,36 @@ function uploadPhotos(e) {
   if (!p.photos) p.photos = [];
   const files = Array.from(e.target.files);
   if (!files.length) return;
+  const input = e.target;
   let done = 0;
+  let added = 0;
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = ev => {
-      const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
-      p.photos.push({ id: genId(), name: file.name, caption: '', data: ev.target.result, ts: new Date().toISOString(), date: Date.now(), size: file.size, assignments: [], folderId: folderId || '' });
-      logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
+      try {
+        const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
+        p.photos.push({ id: genId(), name: file.name, caption: '', data: ev.target.result, ts: new Date().toISOString(), date: Date.now(), size: file.size, assignments: [], folderId: folderId || '' });
+        logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
+        added++;
+      } catch(err) { console.error('Photo add error:', err); }
       done++;
-      if (done === files.length) { save(); renderPhotos(); toast(`Added ${files.length} photo${files.length>1?'s':''}`, 'success'); }
+      if (done === files.length) {
+        if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''}`, 'success'); }
+        else { toast('Could not add photos', 'error'); }
+        try { input.value = ''; } catch(e) {}
+      }
+    };
+    reader.onerror = () => {
+      console.error('FileReader error for', file.name);
+      done++;
+      if (done === files.length) {
+        if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''} (some failed)`, 'warning'); }
+        else { toast('Could not read photos', 'error'); }
+        try { input.value = ''; } catch(e) {}
+      }
     };
     reader.readAsDataURL(file);
   });
-  e.target.value = '';
 }
 
 function deletePhoto(idx) {
