@@ -79,6 +79,84 @@ async function _getOrCreateDriveFolder() {
   return (await cr.json()).id;
 }
 
+// ── Separate photo storage helpers ───────────────────────────────────────────
+function _dataUrlToBlob(dataUrl) {
+  const ci = dataUrl.indexOf(',');
+  const mime = dataUrl.substring(5, dataUrl.indexOf(';'));
+  const b64 = dataUrl.substring(ci + 1);
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+function _blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+async function _getOrCreateSubFolder(parentId, name) {
+  const q = encodeURIComponent(`name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const { files } = await r.json();
+  if (files?.length) return files[0].id;
+  const cr = await _driveFetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parents: [parentId], mimeType: 'application/vnd.google-apps.folder' })
+  });
+  return (await cr.json()).id;
+}
+
+async function _listDriveFolder(parentId) {
+  const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
+  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,size)&pageSize=1000`);
+  const { files } = await r.json();
+  return files || [];
+}
+
+async function _driveUploadBlob(parentId, fileName, blob, existingFileId) {
+  if (existingFileId) {
+    await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=media`, {
+      method: 'PATCH', headers: { 'Content-Type': blob.type }, body: blob
+    });
+    return existingFileId;
+  }
+  const boundary = 'nrp' + Date.now() + Math.random().toString(36).slice(2, 8);
+  const meta = JSON.stringify({ name: fileName, parents: [parentId] });
+  const head = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${blob.type}\r\n\r\n`;
+  const tail = `\r\n--${boundary}--`;
+  const body = new Blob([head, blob, tail]);
+  const r = await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
+  });
+  return (await r.json()).id;
+}
+
+async function _driveDeleteFile(fileId) {
+  try { await _driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, { method: 'DELETE' }); } catch(e) {}
+}
+
+// Per-project map tracking which photos are already on Drive
+function _getDriveMap(projectId) {
+  try { return JSON.parse(localStorage.getItem('netrack_drivemap_' + projectId) || '{}'); } catch(e) { return {}; }
+}
+function _saveDriveMap(projectId, map) {
+  try { localStorage.setItem('netrack_drivemap_' + projectId, JSON.stringify(map)); } catch(e) {}
+}
+
+// Strip photo binary data from a project for metadata-only JSON
+function _stripPhotoData(project) {
+  const p = { ...project };
+  if (p.photos) p.photos = p.photos.map(({ data, ...rest }) => rest);
+  if (p.siteMap) { const { data, ...sm } = p.siteMap; p.siteMap = sm; }
+  return p;
+}
+
 // ── Manufacturer list save/load ──────────────────────────────────────────────
 const GDRIVE_MFR_FILENAME = 'NetRackManager_manufacturers.json';
 
@@ -259,40 +337,90 @@ async function gdriveSave() {
     _driveProgressModal('☁ Saving to Google Drive', `Uploading "${esc(p.name)}"…`);
     try {
       const folderId = await _getOrCreateDriveFolder();
-      _driveProgressUpdate(15);
-      const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
-      const content  = JSON.stringify({ _netrack_version: 2, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: p }, null, 2);
+      _driveProgressUpdate(5);
+
+      // ── Upload photos as individual binary files ──
+      const photos = (p.photos || []).filter(ph => ph.data);
+      const hasSiteMap = !!p.siteMap?.data;
+      const totalMedia = photos.length + (hasSiteMap ? 1 : 0);
+      const driveMap = _getDriveMap(p.id);
+      let mediaFolderId = driveMap.folderId || null;
+
+      if (totalMedia > 0) {
+        const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
+        if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
+        driveMap.folderId = mediaFolderId;
+        _driveProgressUpdate(10);
+
+        // Upload new or changed photos (skip already-uploaded unchanged ones)
+        const localIds = new Set();
+        let processed = 0;
+        for (const ph of photos) {
+          localIds.add(ph.id);
+          const entry = driveMap[ph.id];
+          if (entry?.driveFileId && entry.dataLen === ph.data.length) { processed++; continue; }
+          _driveProgressUpdate(10 + (processed / totalMedia) * 55, `Uploading photo ${processed + 1} of ${totalMedia}…`);
+          const blob = _dataUrlToBlob(ph.data);
+          const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+          const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
+          driveMap[ph.id] = { driveFileId: did, dataLen: ph.data.length };
+          processed++;
+        }
+
+        // Upload site map if new/changed
+        if (hasSiteMap) {
+          const smEntry = driveMap._siteMap;
+          if (!smEntry?.driveFileId || smEntry.dataLen !== p.siteMap.data.length) {
+            _driveProgressUpdate(66, 'Uploading site map…');
+            const blob = _dataUrlToBlob(p.siteMap.data);
+            const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+            const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
+            driveMap._siteMap = { driveFileId: did, dataLen: p.siteMap.data.length };
+          }
+        }
+
+        // Delete Drive files for locally-deleted photos
+        for (const [key, entry] of Object.entries(driveMap)) {
+          if (key === 'folderId' || key === '_siteMap') continue;
+          if (!localIds.has(key) && entry.driveFileId) {
+            await _driveDeleteFile(entry.driveFileId);
+            delete driveMap[key];
+          }
+        }
+        _saveDriveMap(p.id, driveMap);
+      }
+
+      _driveProgressUpdate(70, 'Saving project metadata…');
+
+      // ── Save metadata JSON (without photo data — photos are separate files) ──
+      const stripped = _stripPhotoData(p);
+      const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
+      const content = JSON.stringify(bundle);
       const desc = _projectDescription(p);
+      const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
       const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
       const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
       const { files } = await search.json();
-      _driveProgressUpdate(35);
+      _driveProgressUpdate(80);
       if (files?.length) {
         await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: content
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
         });
-        _driveProgressUpdate(65);
         await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc })
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: desc })
         });
       } else {
         const boundary = 'nrm' + Date.now();
         const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', description: desc });
         const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
         await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-          method: 'POST',
-          headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-          body
+          method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
         });
-        _driveProgressUpdate(65);
       }
-      _driveProgressUpdate(80, 'Saving manufacturers & folders…');
+
+      _driveProgressUpdate(85, 'Saving manufacturers & folders…');
       await _gdriveSaveManufacturers(folderId);
-      _driveProgressUpdate(90);
+      _driveProgressUpdate(92);
       await _gdriveSaveFolders(folderId);
       _driveProgressUpdate(100);
       logChange('Project saved to Google Drive');
@@ -317,9 +445,46 @@ async function gdriveSaveAll() {
         const p = state.projects[i];
         _driveProgressUpdate(5 + (i / total) * 80, `Saving "${esc(p.name)}" (${i + 1} of ${total})…`);
         try {
-          const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
-          const content = JSON.stringify({ _netrack_version: 2, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: p }, null, 2);
+          // Upload photos as separate binary files
+          const photos = (p.photos || []).filter(ph => ph.data);
+          const hasSiteMap = !!p.siteMap?.data;
+          const driveMap = _getDriveMap(p.id);
+          let mediaFolderId = driveMap.folderId || null;
+          if (photos.length > 0 || hasSiteMap) {
+            const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
+            if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
+            driveMap.folderId = mediaFolderId;
+            const localIds = new Set();
+            for (const ph of photos) {
+              localIds.add(ph.id);
+              const entry = driveMap[ph.id];
+              if (entry?.driveFileId && entry.dataLen === ph.data.length) continue;
+              const blob = _dataUrlToBlob(ph.data);
+              const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+              const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
+              driveMap[ph.id] = { driveFileId: did, dataLen: ph.data.length };
+            }
+            if (hasSiteMap) {
+              const smEntry = driveMap._siteMap;
+              if (!smEntry?.driveFileId || smEntry.dataLen !== p.siteMap.data.length) {
+                const blob = _dataUrlToBlob(p.siteMap.data);
+                const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+                const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
+                driveMap._siteMap = { driveFileId: did, dataLen: p.siteMap.data.length };
+              }
+            }
+            for (const [key, entry] of Object.entries(driveMap)) {
+              if (key === 'folderId' || key === '_siteMap') continue;
+              if (!localIds.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; }
+            }
+            _saveDriveMap(p.id, driveMap);
+          }
+          // Save metadata JSON without photo data
+          const stripped = _stripPhotoData(p);
+          const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
+          const content = JSON.stringify(bundle);
           const desc = _projectDescription(p);
+          const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
           const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
           const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
           const { files } = await search.json();
@@ -436,6 +601,52 @@ async function gdriveAddAllToDashboard() {
   toast(`☁ ${files.length} project${files.length !== 1 ? 's' : ''} added — click one to download`, 'success');
 }
 
+// Download photos from a separate media folder on Drive (parallel, up to 4 concurrent)
+async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
+  const files = await _listDriveFolder(mediaFolderId);
+  const fileMap = {};
+  files.forEach(f => { fileMap[f.name.replace(/\.[^.]+$/, '')] = f; });
+  const photos = (project.photos || []).filter(ph => !ph.data && fileMap[ph.id]);
+  const hasSiteMap = project.siteMap && !project.siteMap.data && fileMap['sitemap'];
+  const total = photos.length + (hasSiteMap ? 1 : 0);
+  if (total === 0) return;
+
+  let done = 0;
+  const queue = [...photos];
+  const driveMap = { folderId: mediaFolderId };
+
+  async function worker() {
+    while (queue.length > 0) {
+      const ph = queue.shift();
+      const f = fileMap[ph.id];
+      try {
+        const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
+        const blob = await r.blob();
+        ph.data = await _blobToDataUrl(blob);
+        ph.size = blob.size;
+        driveMap[ph.id] = { driveFileId: f.id, dataLen: ph.data.length };
+      } catch(e) { console.warn('Photo download failed:', ph.id, e); }
+      done++;
+      if (onProgress) onProgress((done / total) * 100, `Downloading photo ${done} of ${total}…`);
+    }
+  }
+  await Promise.all(Array(Math.min(4, queue.length || 1)).fill(null).map(() => worker()));
+
+  // Site map
+  if (hasSiteMap) {
+    try {
+      const f = fileMap['sitemap'];
+      const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
+      const blob = await r.blob();
+      project.siteMap.data = await _blobToDataUrl(blob);
+      driveMap._siteMap = { driveFileId: f.id, dataLen: project.siteMap.data.length };
+    } catch(e) {}
+    done++;
+    if (onProgress) onProgress(100, 'Photos downloaded');
+  }
+  _saveDriveMap(project.id, driveMap);
+}
+
 // Downloads one project from Drive, saves to IDB, and opens it
 async function openDriveProject(driveFileId) {
   if (!_driveToken) {
@@ -447,17 +658,24 @@ async function openDriveProject(driveFileId) {
     _driveProgressUpdate(10);
     const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`);
     const text = await r.text();
-    _driveProgressUpdate(40, 'Processing project data…');
-    let p = null, importedColors = null, importedVendors = null;
+    _driveProgressUpdate(20, 'Processing project data…');
+    let p = null, importedColors = null, importedVendors = null, mediaFolderId = null;
     const parsed = JSON.parse(text);
     if (parsed._netrack_version === 2 && parsed.project) {
       p = parsed.project; importedColors = parsed.typeColors; importedVendors = parsed.globalVendors;
+      mediaFolderId = parsed._mediaFolderId;
     } else if (parsed.id && parsed.name) {
       p = parsed;
     } else { throw new Error('Unrecognised file format'); }
     if (!p.id || !p.name) throw new Error('Missing project id or name');
     migrateProject(p);
-    _driveProgressUpdate(55, 'Saving to local storage…');
+
+    // Download photos from separate media folder (new format)
+    if (parsed._separateMedia && mediaFolderId) {
+      await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
+    }
+
+    _driveProgressUpdate(65, 'Saving to local storage…');
     await _idbSaveProject(p);
     const existing = state.projects.findIndex(x => x.id === p.id);
     if (existing >= 0) { state.projects[existing] = p; }
@@ -471,7 +689,7 @@ async function openDriveProject(driveFileId) {
       importedVendors.forEach(v => { const k=(v.name||'').toLowerCase(); if(k&&!existingNames.has(k)){state.globalVendors.push({...v});existingNames.add(k);} });
       saveGlobalVendors();
     }
-    _driveProgressUpdate(70, 'Syncing manufacturers & folders…');
+    _driveProgressUpdate(75, 'Syncing manufacturers & folders…');
     try {
       const folderId = await _getOrCreateDriveFolder();
       const mfrMatched = await _gdriveLoadManufacturers(folderId);
@@ -498,17 +716,24 @@ async function gdriveImportFile(fileId, fileName) {
     _driveProgressUpdate(10);
     const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
     const text = await r.text();
-    _driveProgressUpdate(40, 'Processing project data…');
-    let p = null, importedColors = null, importedVendors = null;
+    _driveProgressUpdate(20, 'Processing project data…');
+    let p = null, importedColors = null, importedVendors = null, mediaFolderId = null;
     const parsed = JSON.parse(text);
     if (parsed._netrack_version === 2 && parsed.project) {
       p = parsed.project; importedColors = parsed.typeColors; importedVendors = parsed.globalVendors;
+      mediaFolderId = parsed._mediaFolderId;
     } else if (parsed.id && parsed.name) {
       p = parsed;
     } else { throw new Error('Unrecognised file format'); }
     if (!p.id || !p.name) throw new Error('Missing project id or name');
     migrateProject(p);
-    _driveProgressUpdate(55, 'Saving to local storage…');
+
+    // Download photos from separate media folder (new format)
+    if (parsed._separateMedia && mediaFolderId) {
+      await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
+    }
+
+    _driveProgressUpdate(65, 'Saving to local storage…');
     await _idbSaveProject(p);
     const existing = state.projects.findIndex(x => x.id === p.id);
     if (existing >= 0) { state.projects[existing] = p; }
@@ -522,7 +747,7 @@ async function gdriveImportFile(fileId, fileName) {
       importedVendors.forEach(v => { const k=(v.name||'').toLowerCase(); if(k&&!existingNames.has(k)){state.globalVendors.push({...v});existingNames.add(k);} });
       saveGlobalVendors();
     }
-    _driveProgressUpdate(70, 'Syncing manufacturers & folders…');
+    _driveProgressUpdate(75, 'Syncing manufacturers & folders…');
     try {
       const folderId = await _getOrCreateDriveFolder();
       const mfrMatched = await _gdriveLoadManufacturers(folderId);

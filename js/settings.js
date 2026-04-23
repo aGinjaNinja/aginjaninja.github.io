@@ -51,7 +51,9 @@ function renderSettings() {
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
         ${[...PORT_CAPABLE].map(t => `<span class="dt-badge" style="background:${dtColor(t)}22;border-color:${dtColor(t)}40;color:${dtColor(t)}"><span class="dt-dot" style="background:${dtColor(t)}"></span>${esc(t)}</span>`).join('')}
       </div>
+    </div>
     </div>`;
+
 }
 
 function saveProjectDetails() {

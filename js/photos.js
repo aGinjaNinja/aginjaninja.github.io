@@ -101,7 +101,7 @@ function renderPhotos() {
       const cnt = p.photos.filter(ph => ph.folderId === f.id).length;
       return `<div class="photo-folder-item ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')">
         <span>📁</span>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        <span style="flex:1;min-width:0;word-break:break-word">${esc(f.name)}</span>
         <span class="photo-folder-count">${cnt}</span>
         <span class="photo-folder-actions">
           <button class="photo-folder-btn" title="Rename" onclick="event.stopPropagation();renamePhotoFolder('${f.id}')">✎</button>
@@ -162,9 +162,31 @@ function renderPhotos() {
 
   document.getElementById('view-area').innerHTML = `
     <div class="photo-view-wrap">
-      <div class="photo-folder-sidebar">${folderItems}</div>
+      <div class="photo-folder-sidebar" id="photo-folder-sidebar">${folderItems}</div>
+      <div class="photo-folder-resize" id="photo-folder-resize"></div>
       <div class="photo-grid-area">${gridContent}</div>
     </div>`;
+
+  // Draggable resize handle for folder sidebar
+  const resizeHandle = document.getElementById('photo-folder-resize');
+  const sidebar = document.getElementById('photo-folder-sidebar');
+  if (resizeHandle && sidebar) {
+    let dragging = false, startX = 0, startW = 0;
+    resizeHandle.addEventListener('pointerdown', e => {
+      dragging = true; startX = e.clientX; startW = sidebar.offsetWidth;
+      resizeHandle.setPointerCapture(e.pointerId);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+    resizeHandle.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      const w = Math.max(120, Math.min(500, startW + (e.clientX - startX)));
+      sidebar.style.width = w + 'px';
+    });
+    const stopDrag = () => { dragging = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; };
+    resizeHandle.addEventListener('pointerup', stopDrag);
+    resizeHandle.addEventListener('pointercancel', stopDrag);
+  }
 }
 
 function setPhotoFolder(folderId) {

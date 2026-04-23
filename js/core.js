@@ -4,6 +4,9 @@
 
 const LOGO_URI = "img/logo.jpg";
 
+// File handles for Save > Local (keyed by project ID) — allows overwriting the same file
+const _localSaveHandles = new Map();
+
 const DEVICE_TYPES = [
   'Modem','Router','Firewall','Switch','Patch Panel','Fiber Enclosure','AP','Server',
   'PC/Workstation','IP Phone','IP Camera','Access Control',
@@ -348,16 +351,45 @@ function globalSave() {
       globalVendors: state.globalVendors || [],
       project: p
     };
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${p.name.replace(/\s+/g,'_')}_netrack.json`;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
-    logChange('Project exported (Save button)');
+    const json = JSON.stringify(bundle, null, 2);
+    const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.json`;
+
+    // Use File System Access API so subsequent saves overwrite the same file
+    if (window.showSaveFilePicker) {
+      (async () => {
+        try {
+          let fh = _localSaveHandles.get(p.id);
+          if (!fh) {
+            fh = await showSaveFilePicker({
+              suggestedName: defaultName,
+              types: [{ description: 'NetRack Project', accept: { 'application/json': ['.json'] } }]
+            });
+            _localSaveHandles.set(p.id, fh);
+          }
+          const writable = await fh.createWritable();
+          await writable.write(json);
+          await writable.close();
+          logChange('Project exported (Save button)');
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+          // Handle lost/invalid handle — re-prompt
+          _localSaveHandles.delete(p.id);
+          toast('Save failed: ' + e.message + ' — try again', 'error');
+        }
+      })();
+    } else {
+      // Fallback for browsers without File System Access API
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultName;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+      logChange('Project exported (Save button)');
+    }
   }
 
   // Visual feedback on the button
@@ -537,7 +569,7 @@ async function fsaWriteProject(p, bundle, silent) {
   const safeName = p.name.replace(/[^a-z0-9_\-. ]/gi, '_');
   const fileHandle = await handle.getFileHandle(safeName + '.json', { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(bundle, null, 2));
+  await writable.write(JSON.stringify(bundle));
   await writable.close();
 }
 
@@ -562,10 +594,15 @@ async function backupProjectToAgent(p, silent = true) {
         signal: AbortSignal.timeout(8000)
       });
     } else if (mode === 'gdrive' && cfg.gdriveUrl) {
+      // Strip photo data for auto-save — full photos are synced via manual Drive save
+      const lightP = { ...p };
+      if (lightP.photos) lightP.photos = lightP.photos.map(({ data, ...rest }) => rest);
+      if (lightP.siteMap) { const { data, ...sm } = lightP.siteMap; lightP.siteMap = sm; }
+      const lightBundle = { _netrack_version: 2, typeColors: state.typeColors, globalVendors: state.globalVendors || [], project: lightP };
       await fetch(cfg.gdriveUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ filename: p.name.replace(/[^a-z0-9_\-. ]/gi,'_') + '.json', content: JSON.stringify(bundle, null, 2) }),
+        body: JSON.stringify({ filename: p.name.replace(/[^a-z0-9_\-. ]/gi,'_') + '.json', content: JSON.stringify(lightBundle) }),
         signal: AbortSignal.timeout(12000)
       });
     }
