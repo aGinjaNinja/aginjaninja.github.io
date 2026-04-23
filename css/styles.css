@@ -443,8 +443,11 @@
   .photo-card:hover .photo-move-btn { display: flex !important; }
   /* Photo folders */
   .photo-view-wrap { display: flex; gap: 0; height: calc(100vh - 100px); }
-  .photo-folder-sidebar { width: 190px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .photo-folder-item { display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .12s; position: relative; }
+  .photo-folder-sidebar { width: 190px; flex-shrink: 0; padding: 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .photo-folder-item { display: flex; align-items: flex-start; gap: 7px; padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .12s; position: relative; }
+  .photo-folder-resize { width: 5px; flex-shrink: 0; cursor: col-resize; background: transparent; transition: background .15s; position: relative; }
+  .photo-folder-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--border); }
+  .photo-folder-resize:hover, .photo-folder-resize:active { background: rgba(0,200,255,.18); }
   .photo-folder-item:hover { background: var(--card2); }
   .photo-folder-item.active { background: rgba(0,200,255,.12); color: var(--accent); }
   .photo-folder-count { margin-left: auto; font-size: 10px; color: var(--text3); font-family: var(--mono); flex-shrink: 0; }
