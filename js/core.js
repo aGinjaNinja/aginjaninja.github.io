@@ -346,6 +346,38 @@ function closeSidebarDropdowns() {
   });
 }
 
+// Build project export as a Blob, stringifying photos individually
+// to avoid hitting JS engine string-length limits on large projects
+function _buildProjectBlob(p) {
+  const parts = [];
+  parts.push('{"_netrack_version":2,"typeColors":');
+  parts.push(JSON.stringify(state.typeColors || {}));
+  parts.push(',"globalVendors":');
+  parts.push(JSON.stringify(state.globalVendors || []));
+  parts.push(',"project":{');
+
+  const keys = Object.keys(p);
+  for (let ki = 0; ki < keys.length; ki++) {
+    const k = keys[ki];
+    if (ki > 0) parts.push(',');
+    parts.push(JSON.stringify(k) + ':');
+
+    if (k === 'photos' && Array.isArray(p.photos)) {
+      // Stringify each photo individually to keep each string small
+      parts.push('[');
+      for (let i = 0; i < p.photos.length; i++) {
+        if (i > 0) parts.push(',');
+        parts.push(JSON.stringify(p.photos[i]));
+      }
+      parts.push(']');
+    } else {
+      parts.push(JSON.stringify(p[k]));
+    }
+  }
+  parts.push('}}');
+  return new Blob(parts, { type: 'application/json' });
+}
+
 async function globalSave() {
  try {
   // Flush any in-flight photo editor caption/notes edits before saving
@@ -368,16 +400,10 @@ async function globalSave() {
   // Always export the current project as a JSON file
   const p = getProject();
   if (p) {
-    const bundle = {
-      _netrack_version: 2,
-      typeColors: state.typeColors || {},
-      globalVendors: state.globalVendors || [],
-      project: p
-    };
-    const json = JSON.stringify(bundle, null, 2);
     const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.json`;
 
-    const blob = new Blob([json], { type: 'application/json' });
+    // Build JSON as Blob parts to avoid V8 string length limits with large photo data
+    const blob = _buildProjectBlob(p);
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     if (isMobile) {
