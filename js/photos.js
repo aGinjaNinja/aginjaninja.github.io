@@ -1,6 +1,25 @@
 // ═══════════════════════════════════════════
 //  PHOTOS
 // ═══════════════════════════════════════════
+
+// Generate a small thumbnail from a data URL via offscreen canvas
+function _generateThumb(dataUrl, maxW = 320) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
 let _photoEditIdx = -1;
 let _photoDrag = null; // { slotIdx, offX, offY }
 let _photoLayoutLocked = false;
@@ -81,6 +100,19 @@ function renderPhotos() {
     <button class="btn btn-primary btn-sm" onclick="document.getElementById('photo-capture').click()">📸 Take Photo</button>
   `);
 
+  // Generate thumbnails for existing photos that don't have them (background migration)
+  const needsThumb = p.photos.filter(ph => ph.data && !ph.thumb);
+  if (needsThumb.length > 0) {
+    (async () => {
+      for (const ph of needsThumb) {
+        ph.thumb = await _generateThumb(ph.data) || '';
+      }
+      save();
+      // Re-render only if still on photos view
+      if (state.currentView === 'photos' && _photoEditIdx < 0) renderPhotos();
+    })();
+  }
+
   // Filter photos for current view
   const visiblePhotos = _currentPhotoFolderId === 'all'
     ? p.photos.map((ph, idx) => ({ ph, idx }))
@@ -147,7 +179,7 @@ function renderPhotos() {
         ? `<div class="photo-folder-badge">📁 ${esc(folderObj.name)}</div>` : '';
       return `
       <div class="photo-card" onclick="openPhotoViewer(${idx})">
-        <div class="photo-thumb" style="background-image:url('${ph.data}')${ph.rotation ? ';transform:rotate('+ph.rotation+'deg)' : ''}"></div>
+        <div class="photo-thumb" style="background-image:url('${ph.thumb || ph.data}')${ph.rotation ? ';transform:rotate('+ph.rotation+'deg)' : ''}"></div>
         <div class="photo-meta">
           <div class="photo-title">${esc(ph.caption || ph.name || 'Photo ' + (idx+1))}</div>
           <div class="photo-date">${ph.ts ? new Date(ph.ts).toLocaleDateString() : (ph.date ? new Date(ph.date).toLocaleDateString() : '')}${assigned?` · <span style="color:var(--accent)">${assigned} tagged</span>`:''}</div>
@@ -387,10 +419,12 @@ function uploadPhotos(e) {
   let added = 0;
   files.forEach(file => {
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = async ev => {
       try {
+        const dataUrl = ev.target.result;
+        const thumb = await _generateThumb(dataUrl);
         const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
-        p.photos.push({ id: genId(), name: file.name, caption: '', data: ev.target.result, ts: new Date().toISOString(), date: Date.now(), size: file.size, assignments: [], folderId: folderId || '' });
+        p.photos.push({ id: genId(), name: file.name, caption: '', data: dataUrl, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, assignments: [], folderId: folderId || '' });
         logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
         added++;
       } catch(err) { console.error('Photo add error:', err); }
@@ -1236,11 +1270,13 @@ function replacePhoto(e, idx) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = async ev => {
     const p = getProject();
     if (!p.photos[idx]) return;
     const oldName = p.photos[idx].caption || p.photos[idx].name || `Photo ${idx+1}`;
-    p.photos[idx].data = ev.target.result;
+    const dataUrl = ev.target.result;
+    p.photos[idx].data = dataUrl;
+    p.photos[idx].thumb = await _generateThumb(dataUrl) || '';
     p.photos[idx].name = file.name;
     p.photos[idx].size = file.size;
     logChange(`Photo replaced: "${oldName}" → "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);

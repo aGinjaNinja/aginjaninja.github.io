@@ -14,7 +14,8 @@ function renderRacks() {
             const c = dtColor(d.deviceType||'Misc.');
             return `<div class="pool-device" data-device-id="${d.id}" draggable="true"
               ondragstart="onDragStart(event,'${d.id}',null)"
-              ondragend="onDragEnd(event)">
+              ondragend="onDragEnd(event)"
+              onclick="assignPoolDeviceModal('${d.id}')">
               <div class="dname" style="color:${c}">${esc(d.name)}</div>
               <div class="dtype" style="margin-top:3px">${dtBadge(d.deviceType||'Misc.')}</div>
             </div>`;
@@ -217,7 +218,7 @@ function buildRackHTML(rack, p) {
            ondragover="onSlotDragOver(event,'${rack.id}',${u})"
            ondragleave="onSlotDragLeave(event)"
            ondrop="onSlotDrop(event,'${rack.id}',${u})"
-           ${!dev ? `ondblclick="addDeviceToRack('${rack.id}',${u})" title="Double-click to add device at U${u}"` : ''}>
+           ${!dev ? `onclick="addDeviceToRack('${rack.id}',${u})" title="Tap to add device at U${u}"` : ''}>
         ${dev ? `
           ${dev.status ? `<span class="status-dot-rack" style="background:${STATUS_COLORS[dev.status]||'#778899'}" title="${esc(STATUS_LABELS[dev.status]||dev.status)}"></span>` : ''}
           <div class="slot-label" style="color:${dc};cursor:grab;display:flex;align-items:center;gap:5px;${isPP?'min-width:90px;max-width:90px;':''}flex-shrink:0"
@@ -461,6 +462,64 @@ function saveDeviceToRack() {
   save(); closeModal(); renderRacks();
   toast(`"${name}" added at U${u} — double-click it to edit details`, 'success');
   _pendingRackAssign = null;
+}
+
+function assignPoolDeviceModal(deviceId) {
+  const p = getProject();
+  const dev = p.devices.find(d => d.id === deviceId);
+  if (!dev) return;
+  if (p.racks.length === 0) return toast('Create a rack first', 'error');
+  const rackOpts = p.racks.map(r => `<option value="${r.id}">${esc(r.name)} (${r.uHeight}U)</option>`).join('');
+  openModal(`
+    <h3>Place "${esc(dev.name)}" in Rack</h3>
+    <div class="form-row"><label>Rack</label>
+      <select class="form-control" id="apm-rack" onchange="updatePoolSlotOptions()">${rackOpts}</select>
+    </div>
+    <div class="form-row"><label>U Slot</label>
+      <select class="form-control" id="apm-u"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePoolAssign('${deviceId}')">Place in Rack</button>
+    </div>
+  `);
+  updatePoolSlotOptions();
+}
+
+function updatePoolSlotOptions() {
+  const p = getProject();
+  const rackId = document.getElementById('apm-rack')?.value;
+  const rack = p.racks.find(r => r.id === rackId);
+  if (!rack) return;
+  const sel = document.getElementById('apm-u');
+  if (!sel) return;
+  let opts = '';
+  for (let u = 1; u <= rack.uHeight; u++) {
+    const occupied = p.devices.some(d => d.rackId === rackId && d.rackU && d.rackU <= u && u < d.rackU + (d.deviceUHeight || 1));
+    if (!occupied) opts += `<option value="${u}">U${u}</option>`;
+  }
+  sel.innerHTML = opts || '<option value="">No open slots</option>';
+}
+
+function savePoolAssign(deviceId) {
+  const p = getProject();
+  const dev = p.devices.find(d => d.id === deviceId);
+  if (!dev) return;
+  const rackId = document.getElementById('apm-rack')?.value;
+  const u = parseInt(document.getElementById('apm-u')?.value);
+  if (!rackId || !u) return toast('Select a rack and slot', 'error');
+  const rack = p.racks.find(r => r.id === rackId);
+  const devUH = dev.deviceUHeight || 1;
+  if (rack && u + devUH - 1 > rack.uHeight) return toast(`${dev.name} (${devUH}U) doesn't fit at U${u}`, 'error');
+  for (let cu = u; cu < u + devUH; cu++) {
+    const blocker = p.devices.find(d => d.id !== deviceId && d.rackId === rackId && d.rackU && d.rackU <= cu && cu < d.rackU + (d.deviceUHeight || 1));
+    if (blocker) return toast(`U${cu} is occupied by ${blocker.name}`, 'error');
+  }
+  dev.rackId = rackId;
+  dev.rackU = u;
+  logChange(`Rack assigned: ${dev.name} → ${rack ? rack.name : rackId} U${u}`);
+  save(); closeModal(); renderRacks();
+  toast(`"${dev.name}" placed at U${u}`, 'success');
 }
 
 function addRack() { openRackModal(null); }
