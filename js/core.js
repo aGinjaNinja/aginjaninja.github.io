@@ -346,7 +346,7 @@ function closeSidebarDropdowns() {
   });
 }
 
-function globalSave() {
+async function globalSave() {
   // Flush any in-flight photo editor caption/notes edits before saving
   const capEl = document.getElementById('photo-editor-caption');
   if (capEl && _photoEditIdx >= 0) {
@@ -376,8 +376,11 @@ function globalSave() {
     const json = JSON.stringify(bundle, null, 2);
     const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.json`;
 
-    // Use File System Access API so subsequent saves overwrite the same file
-    if (window.showSaveFilePicker) {
+    const blob = new Blob([json], { type: 'application/json' });
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    // Desktop: Use File System Access API so subsequent saves overwrite the same file
+    if (!isMobile && window.showSaveFilePicker) {
       (async () => {
         try {
           let fh = _localSaveHandles.get(p.id);
@@ -394,14 +397,44 @@ function globalSave() {
           logChange('Project exported (Save button)');
         } catch (e) {
           if (e.name === 'AbortError') return;
-          // Handle lost/invalid handle — re-prompt
           _localSaveHandles.delete(p.id);
           toast('Save failed: ' + e.message + ' — try again', 'error');
         }
       })();
+    } else if (isMobile) {
+      // Mobile: try Web Share API first, then show a tappable download modal
+      const file = new File([blob], defaultName, { type: 'application/json' });
+      let shared = false;
+      try {
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: p.name });
+          shared = true;
+          logChange('Project exported (Share)');
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+      if (!shared) {
+        // Show a download modal with a tappable link
+        const url = URL.createObjectURL(blob);
+        openModal(`
+          <h3>Save Project File</h3>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
+            Tap the button below to download your project file.
+          </p>
+          <div class="modal-actions" style="flex-direction:column;gap:10px">
+            <a href="${url}" download="${esc(defaultName)}"
+               style="display:block;text-align:center;padding:12px 20px;background:var(--accent);color:#000;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px"
+               onclick="setTimeout(()=>{URL.revokeObjectURL('${url}');closeModal()},500)">
+              Download ${esc(defaultName)}
+            </a>
+            <button class="btn btn-ghost btn-sm" onclick="URL.revokeObjectURL('${url}');closeModal()">Cancel</button>
+          </div>
+        `);
+        logChange('Project exported (Save button)');
+      }
     } else {
-      // Fallback for browsers without File System Access API
-      const blob = new Blob([json], { type: 'application/json' });
+      // Desktop fallback: download link
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
