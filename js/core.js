@@ -381,26 +381,24 @@ async function globalSave() {
 
     // Desktop: Use File System Access API so subsequent saves overwrite the same file
     if (!isMobile && window.showSaveFilePicker) {
-      (async () => {
-        try {
-          let fh = _localSaveHandles.get(p.id);
-          if (!fh) {
-            fh = await showSaveFilePicker({
-              suggestedName: defaultName,
-              types: [{ description: 'NetRack Project', accept: { 'application/json': ['.json'] } }]
-            });
-            _localSaveHandles.set(p.id, fh);
-          }
-          const writable = await fh.createWritable();
-          await writable.write(json);
-          await writable.close();
-          logChange('Project exported (Save button)');
-        } catch (e) {
-          if (e.name === 'AbortError') return;
-          _localSaveHandles.delete(p.id);
-          toast('Save failed: ' + e.message + ' — try again', 'error');
+      try {
+        let fh = _localSaveHandles.get(p.id);
+        if (!fh) {
+          fh = await showSaveFilePicker({
+            suggestedName: defaultName,
+            types: [{ description: 'NetRack Project', accept: { 'application/json': ['.json'] } }]
+          });
+          _localSaveHandles.set(p.id, fh);
         }
-      })();
+        const writable = await fh.createWritable();
+        await writable.write(json);
+        await writable.close();
+        logChange('Project exported (Save button)');
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        _localSaveHandles.delete(p.id);
+        toast('Save failed: ' + e.message + ' — try again', 'error');
+      }
     } else if (isMobile) {
       // Mobile: try Web Share API first, then show a tappable download modal
       const file = new File([blob], defaultName, { type: 'application/json' });
