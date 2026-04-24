@@ -347,9 +347,10 @@ function closeSidebarDropdowns() {
 }
 
 async function globalSave() {
+ try {
   // Flush any in-flight photo editor caption/notes edits before saving
   const capEl = document.getElementById('photo-editor-caption');
-  if (capEl && _photoEditIdx >= 0) {
+  if (capEl && typeof _photoEditIdx !== 'undefined' && _photoEditIdx >= 0) {
     const ph = getProject()?.photos?.[_photoEditIdx];
     if (ph) ph.caption = capEl.value.trim();
   }
@@ -379,27 +380,7 @@ async function globalSave() {
     const blob = new Blob([json], { type: 'application/json' });
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-    // Desktop: Use File System Access API so subsequent saves overwrite the same file
-    if (!isMobile && window.showSaveFilePicker) {
-      try {
-        let fh = _localSaveHandles.get(p.id);
-        if (!fh) {
-          fh = await showSaveFilePicker({
-            suggestedName: defaultName,
-            types: [{ description: 'NetRack Project', accept: { 'application/json': ['.json'] } }]
-          });
-          _localSaveHandles.set(p.id, fh);
-        }
-        const writable = await fh.createWritable();
-        await writable.write(json);
-        await writable.close();
-        logChange('Project exported (Save button)');
-      } catch (e) {
-        if (e.name === 'AbortError') return;
-        _localSaveHandles.delete(p.id);
-        toast('Save failed: ' + e.message + ' — try again', 'error');
-      }
-    } else if (isMobile) {
+    if (isMobile) {
       // Mobile: try Web Share API first, then show a tappable download modal
       const file = new File([blob], defaultName, { type: 'application/json' });
       let shared = false;
@@ -413,7 +394,6 @@ async function globalSave() {
         if (e.name === 'AbortError') return;
       }
       if (!shared) {
-        // Show a download modal with a tappable link
         const url = URL.createObjectURL(blob);
         openModal(`
           <h3>Save Project File</h3>
@@ -432,15 +412,15 @@ async function globalSave() {
         logChange('Project exported (Save button)');
       }
     } else {
-      // Desktop fallback: download link
+      // Desktop: direct download
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = defaultName;
-      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
-      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       logChange('Project exported (Save button)');
     }
   }
@@ -455,6 +435,10 @@ async function globalSave() {
     setTimeout(() => { btn.innerHTML = orig; }, 2200);
   }
   toast('Project exported', 'success');
+ } catch (err) {
+  console.error('globalSave error:', err);
+  toast('Save failed: ' + err.message, 'error');
+ }
 }
 
 async function load() {
