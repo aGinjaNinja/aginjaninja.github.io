@@ -2,24 +2,7 @@
 //  PHOTOS
 // ═══════════════════════════════════════════
 
-// Generate a small thumbnail from a data URL via offscreen canvas
-function _generateThumb(dataUrl, maxW = 320) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxW / img.width);
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      resolve(c.toDataURL('image/jpeg', 0.7));
-    };
-    img.onerror = () => resolve(null);
-    img.src = dataUrl;
-  });
-}
+
 let _photoEditIdx = -1;
 let _photoDrag = null; // { slotIdx, offX, offY }
 let _photoLayoutLocked = false;

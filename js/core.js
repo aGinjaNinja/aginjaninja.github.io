@@ -7,6 +7,25 @@ const LOGO_URI = "img/logo.jpg";
 // File handles for Save > Local (keyed by project ID) — allows overwriting the same file
 const _localSaveHandles = new Map();
 
+// Generate a small thumbnail from a data URL via offscreen canvas
+function _generateThumb(dataUrl, maxW = 480) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 const DEVICE_TYPES = [
   'Modem','Router','Firewall','Switch','Patch Panel','Fiber Enclosure','AP','Server',
   'PC/Workstation','IP Phone','IP Camera','Access Control',
@@ -137,6 +156,9 @@ function migrateProject(p) {
   if (!p.timeLog) p.timeLog = [];
   // Feature 11: Cable Runs
   if (!p.cableRuns) p.cableRuns = [];
+  if (!p.cableRunMap) p.cableRunMap = { image: null, thumb: null, paths: [], symbols: [] };
+  if (!p.cableRunMap.paths) p.cableRunMap.paths = [];
+  if (!p.cableRunMap.symbols) p.cableRunMap.symbols = [];
   // Feature 12: Locations
   if (!p.locations) p.locations = [];
   // Feature 13: Site Map
