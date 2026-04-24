@@ -151,8 +151,8 @@ function renderCableRunMap() {
     const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
     const color = line.color || '#ffaa00';
     return `<g onclick="event.stopPropagation();crPathClick('${line.id}')" style="cursor:pointer">
-      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
-      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
+      <path d="${pts}" stroke="${color}" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" vector-effect="non-scaling-stroke" pointer-events="stroke"/>
+      <path d="${pts}" stroke="transparent" stroke-width="8" vector-effect="non-scaling-stroke" fill="none" pointer-events="stroke"/>
       ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="2.5" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1" pointer-events="none">${esc(line.label)}</text>`; })() : ''}
     </g>`;
   }).join('');
@@ -160,7 +160,7 @@ function renderCableRunMap() {
   // In-progress drawing
   const drawingLine = (_crDrawing && _crCurrentLine && _crCurrentLine.points.length > 0) ? (() => {
     const pts = _crCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    return `<path d="${pts}" stroke="${_crCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
+    return `<path d="${pts}" stroke="${_crCurrentLine.color||'#ffaa00'}" stroke-width="2" fill="none" opacity="0.6" vector-effect="non-scaling-stroke"/>`;
   })() : '';
 
   // Symbol palette HTML
@@ -183,7 +183,8 @@ function renderCableRunMap() {
   // Symbols list
   const symbolsList = symbols.map(s => {
     const def = CR_SYMBOLS[s.type];
-    return `<div class="cr-path-item" onclick="crSymbolClick('${s.id}')">
+    return `<div class="cr-path-item" onclick="crSymbolClick('${s.id}')"
+      onmouseenter="crHighlightSymbol('${s.id}',true)" onmouseleave="crHighlightSymbol('${s.id}',false)">
       <svg width="14" height="14" viewBox="0 0 24 24">${def?def.icon:''}</svg>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.label || def?.label || s.type)}</span>
       ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();crDeleteSymbol('${s.id}')" style="font-size:9px;padding:1px 4px">✕</button>`:''}
@@ -195,10 +196,13 @@ function renderCableRunMap() {
       <div class="cr-map-toolbar">
         ${canEdit ? `
           <div class="cr-toolbar-section">Draw</div>
-          ${!_crDrawing
-            ? `<button class="btn btn-ghost btn-sm" style="width:100%;font-size:11px" onclick="crStartDraw()">✏ Draw Cable Path</button>`
-            : `<button class="btn btn-danger btn-sm" style="width:100%;font-size:11px" onclick="crCancelDraw()">✕ Cancel Drawing</button>`
-          }
+          <div style="display:flex;gap:4px;align-items:center">
+            <input type="color" id="cr-draw-color" value="${_crCurrentLine?.color||'#ffaa00'}" style="width:32px;height:28px;padding:1px;border:1px solid var(--border);border-radius:4px;background:var(--card2);cursor:pointer" title="Path color">
+            ${!_crDrawing
+              ? `<button class="btn btn-ghost btn-sm" style="flex:1;font-size:11px" onclick="crStartDraw()">✏ Draw Cable Path</button>`
+              : `<button class="btn btn-danger btn-sm" style="flex:1;font-size:11px" onclick="crCancelDraw()">✕ Cancel Drawing</button>`
+            }
+          </div>
           <div class="cr-toolbar-section">Symbols</div>
           ${paletteHtml}
           ${_crPlacingSymbol ? `<button class="btn btn-danger btn-sm" style="width:100%;font-size:10px;margin-top:2px" onclick="crCancelSymbol()">✕ Cancel Placement</button>` : ''}
@@ -232,12 +236,14 @@ function renderCableRunMap() {
               const def = CR_SYMBOLS[s.type];
               if (!def) return '';
               const rot = s.rotation || 0;
+              const sz = s.size || 1;
+              const pxSize = Math.round(28 * sz);
               return `<div class="cr-symbol-marker" data-sym-id="${s.id}" style="left:${s.x}%;top:${s.y}%;pointer-events:all"
                 title="${esc(s.label || def.label)}"
                 onclick="event.stopPropagation();crSymbolClick('${s.id}')"
                 onmousedown="event.stopPropagation();crSymbolDragStart(event,'${s.id}')">
-                <svg width="28" height="28" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)">${def.icon}</svg>
-                ${s.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:9px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,.7);padding:1px 4px;border-radius:2px;white-space:nowrap;margin-top:1px">${esc(s.label)}</div>` : ''}
+                <svg width="${pxSize}" height="${pxSize}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)">${def.icon}</svg>
+                ${s.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:${Math.max(7,Math.round(9*sz))}px;font-family:var(--mono);color:#fff;background:rgba(0,0,0,.7);padding:1px 4px;border-radius:2px;white-space:nowrap;margin-top:1px">${esc(s.label)}</div>` : ''}
               </div>`;
             }).join('')}
           </div>
@@ -381,7 +387,9 @@ function crEventToImgPct(e) {
 function crStartDraw() {
   _crDrawing = true;
   _crPlacingSymbol = null;
-  _crCurrentLine = { points: [], color: '#ffaa00', label: '' };
+  const colorEl = document.getElementById('cr-draw-color');
+  const color = colorEl ? colorEl.value : '#ffaa00';
+  _crCurrentLine = { points: [], color, label: '' };
   renderCableRunMap();
 }
 function crCancelDraw() {
@@ -427,14 +435,14 @@ function crRedrawSvg() {
     const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
     const color = line.color || '#ffaa00';
     return `<g onclick="event.stopPropagation();crPathClick('${line.id}')" style="cursor:pointer">
-      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
-      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
+      <path d="${pts}" stroke="${color}" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" vector-effect="non-scaling-stroke" pointer-events="stroke"/>
+      <path d="${pts}" stroke="transparent" stroke-width="8" vector-effect="non-scaling-stroke" fill="none" pointer-events="stroke"/>
       ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="2.5" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1" pointer-events="none">${esc(line.label)}</text>`; })() : ''}
     </g>`;
   }).join('');
   const drawingLine = (_crDrawing && _crCurrentLine && _crCurrentLine.points.length > 0) ? (() => {
     const pts = _crCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    return `<path d="${pts}" stroke="${_crCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
+    return `<path d="${pts}" stroke="${_crCurrentLine.color||'#ffaa00'}" stroke-width="2" fill="none" opacity="0.6" vector-effect="non-scaling-stroke"/>`;
   })() : '';
   const svg = document.getElementById('cr-svg');
   if (svg) svg.innerHTML = svgPaths + drawingLine;
@@ -463,7 +471,7 @@ function crFinishDraw() {
         <input type="color" class="form-control" id="crp-color" value="${line.color||'#ffaa00'}" style="height:38px;padding:4px"></div>
       <div class="form-row"><label>Cable Type</label>
         <select class="form-control" id="crp-type">
-          ${CABLE_TYPES.map(t=>`<option>${t}</option>`).join('')}
+          ${CABLE_TYPES.map(t=>`<option${t==='Cat6'?' selected':''}>${t}</option>`).join('')}
         </select></div>
     </div>
     <div class="form-row"><label>Link to Cable Run (optional)</label>
@@ -559,7 +567,7 @@ function crPlaceSymbolAt(x, y) {
   if (!type) return;
   const def = CR_SYMBOLS[type];
   const p = getProject();
-  const sym = { id: genId(), type, x, y, label: '', rotation: 0 };
+  const sym = { id: genId(), type, x, y, label: '', rotation: 0, size: 1 };
   p.cableRunMap.symbols.push(sym);
   logChange(`Cable map symbol placed: ${def?.label || type}`);
   save();
@@ -573,6 +581,7 @@ function crSymbolClick(id) {
   const s = (p.cableRunMap?.symbols||[]).find(x => x.id === id);
   if (!s) return;
   const def = CR_SYMBOLS[s.type];
+  const sz = s.size || 1;
   openModal(`
     <h3>Edit Symbol — ${esc(def?.label || s.type)}</h3>
     <div style="text-align:center;margin:10px 0">
@@ -580,6 +589,13 @@ function crSymbolClick(id) {
     </div>
     <div class="form-row"><label>Label (optional)</label>
       <input class="form-control" id="csm-label" value="${esc(s.label||'')}" placeholder="e.g. J-Box #3"></div>
+    <div class="form-row"><label>Size</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="csm-size" min="0.5" max="3" step="0.1" value="${sz}" style="flex:1;accent-color:var(--accent)"
+          oninput="document.getElementById('csm-size-lbl').textContent=Math.round(this.value*100)+'%'">
+        <span id="csm-size-lbl" style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:36px">${Math.round(sz*100)}%</span>
+      </div>
+    </div>
     <div class="form-row"><label>Rotation</label>
       <div style="display:flex;align-items:center;gap:10px">
         <input type="range" id="csm-rot" min="0" max="360" step="15" value="${s.rotation||0}" style="flex:1;accent-color:var(--accent)"
@@ -600,6 +616,7 @@ function crUpdateSymbol(id) {
   const s = (p.cableRunMap?.symbols||[]).find(x => x.id === id);
   if (!s) return;
   s.label = document.getElementById('csm-label')?.value?.trim() || '';
+  s.size = parseFloat(document.getElementById('csm-size')?.value) || 1;
   s.rotation = parseInt(document.getElementById('csm-rot')?.value) || 0;
   logChange(`Cable map symbol updated`);
   save(); closeModal(); renderCableRunMap(); toast('Symbol updated', 'success');
@@ -648,6 +665,23 @@ function crSymbolDragEnd(e) {
     if (s) { s.x = x; s.y = y; save(); }
   }
   _crDragSymbol = null;
+}
+
+// ═══════════════════════════════════════════
+//  MAP — symbol hover highlight
+// ═══════════════════════════════════════════
+function crHighlightSymbol(id, on) {
+  const el = document.querySelector(`[data-sym-id="${id}"]`);
+  if (!el) return;
+  if (on) {
+    el.style.filter = 'drop-shadow(0 0 8px #fff) drop-shadow(0 0 16px var(--accent))';
+    el.style.zIndex = '50';
+    el.style.transition = 'filter .15s';
+  } else {
+    el.style.filter = '';
+    el.style.zIndex = '';
+    el.style.transition = '';
+  }
 }
 
 // ═══════════════════════════════════════════
