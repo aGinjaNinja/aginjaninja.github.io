@@ -547,6 +547,29 @@
   .field-btn .fbl { font-size: 13px; font-weight: 600; color: var(--text); }
   /* ─── CABLE RUNS ─── */
   .cable-type-badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-family: var(--mono); background: var(--card2); border: 1px solid var(--border2); color: var(--text2); }
+  .cr-view-toggle { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-right: 10px; }
+  .cr-view-toggle button { background: none; border: none; color: var(--text2); font-size: 11px; font-family: var(--mono); padding: 4px 12px; cursor: pointer; transition: all .12s; }
+  .cr-view-toggle button.active { background: var(--accent); color: #000; font-weight: 700; }
+  .cr-map-wrap { display: flex; gap: 0; height: calc(100vh - 110px); }
+  .cr-map-toolbar { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .cr-map-canvas { flex: 1; position: relative; overflow: hidden; background: #060d14; border-radius: 0 8px 8px 0; touch-action: none; }
+  .cr-map-canvas.edit-mode { box-shadow: inset 0 0 0 2px rgba(255,170,0,.35); }
+  .cr-map-canvas img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; user-select: none; pointer-events: none; }
+  .cr-edit-badge { position: absolute; top: 8px; left: 8px; background: rgba(255,170,0,.9); color: #000; font-size: 10px; font-weight: 700; font-family: var(--mono); padding: 3px 8px; border-radius: 4px; z-index: 20; pointer-events: none; }
+  .cr-draw-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.85); color: var(--accent); font-size: 11px; font-family: var(--mono); padding: 4px 12px; border-radius: 4px; z-index: 20; pointer-events: none; white-space: nowrap; }
+  .cr-symbol-btn { display: flex; align-items: center; gap: 6px; background: var(--card2); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; cursor: pointer; color: var(--text); font-size: 11px; font-family: var(--mono); transition: all .12s; width: 100%; text-align: left; }
+  .cr-symbol-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .cr-symbol-btn.active { border-color: var(--accent); background: rgba(0,232,122,.1); color: var(--accent); }
+  .cr-symbol-marker { position: absolute; cursor: grab; z-index: 10; transform: translate(-50%, -50%); }
+  .cr-symbol-marker svg { filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+  .cr-toolbar-section { font-size: 10px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: .5px; padding: 4px 0 2px; border-bottom: 1px solid var(--border); }
+  .cr-path-item { display: flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 6px; border-radius: 4px; cursor: pointer; transition: background .1s; }
+  .cr-path-item:hover { background: var(--card2); }
+  @media (max-width: 700px) {
+    .cr-map-wrap { flex-direction: column; height: auto; }
+    .cr-map-toolbar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); flex-direction: row; flex-wrap: wrap; overflow-x: auto; overflow-y: hidden; max-height: 120px; }
+    .cr-map-canvas { min-height: 50vh; border-radius: 0 0 8px 8px; }
+  }
   /* ─── SITE MAP ─── */
   .sitemap-canvas { position: relative; overflow: hidden; background: #060d14; border: 1px solid var(--border); border-radius: 8px; touch-action: none; }
   .sitemap-canvas.edit-mode { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(255,170,0,.2); }
