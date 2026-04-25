@@ -346,7 +346,7 @@ function closeSidebarDropdowns() {
   });
 }
 
-// Build project export as a Blob, stringifying photos individually
+// Build project export as a Blob, stringifying values in small chunks
 // to avoid hitting JS engine string-length limits on large projects
 function _buildProjectBlob(p) {
   const parts = [];
@@ -361,21 +361,43 @@ function _buildProjectBlob(p) {
     const k = keys[ki];
     if (ki > 0) parts.push(',');
     parts.push(JSON.stringify(k) + ':');
-
-    if (k === 'photos' && Array.isArray(p.photos)) {
-      // Stringify each photo individually to keep each string small
-      parts.push('[');
-      for (let i = 0; i < p.photos.length; i++) {
-        if (i > 0) parts.push(',');
-        parts.push(JSON.stringify(p.photos[i]));
-      }
-      parts.push(']');
-    } else {
-      parts.push(JSON.stringify(p[k]));
-    }
+    _blobifyValue(parts, p[k]);
   }
   parts.push('}}');
   return new Blob(parts, { type: 'application/json' });
+}
+
+// Recursively stringify a value into Blob parts so no single
+// JSON.stringify call handles more than one array element or object key
+function _blobifyValue(parts, val) {
+  if (val === null || val === undefined) { parts.push('null'); return; }
+  if (Array.isArray(val)) {
+    parts.push('[');
+    for (let i = 0; i < val.length; i++) {
+      if (i > 0) parts.push(',');
+      _blobifyValue(parts, val[i]);
+    }
+    parts.push(']');
+  } else if (typeof val === 'object') {
+    parts.push('{');
+    const okeys = Object.keys(val);
+    for (let oi = 0; oi < okeys.length; oi++) {
+      if (oi > 0) parts.push(',');
+      parts.push(JSON.stringify(okeys[oi]) + ':');
+      const v = val[okeys[oi]];
+      // Strings over 1MB get pushed directly (they're already safe as single values)
+      if (typeof v === 'string' && v.length > 1000000) {
+        parts.push(JSON.stringify(v));
+      } else if (typeof v === 'object' && v !== null) {
+        _blobifyValue(parts, v);
+      } else {
+        parts.push(JSON.stringify(v));
+      }
+    }
+    parts.push('}');
+  } else {
+    parts.push(JSON.stringify(val));
+  }
 }
 
 async function globalSave() {
