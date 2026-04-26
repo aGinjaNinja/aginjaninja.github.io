@@ -106,9 +106,14 @@ function crSetView(v) { _crView = v; renderCableRuns(); }
 // ═══════════════════════════════════════════
 //  MAP VIEW
 // ═══════════════════════════════════════════
-function renderCableRunMap() {
+async function renderCableRunMap() {
   const p = getProject();
   const m = p.cableRunMap;
+  // Load map image from separate store if needed
+  if (!m.image) {
+    const imgData = await _idbGetPhotoData('cablemap_' + p.id);
+    if (imgData) m.image = imgData;
+  }
 
   setTopbarActions(`
     <div class="cr-view-toggle">
@@ -276,8 +281,10 @@ function crUploadImage(e) {
   const reader = new FileReader();
   reader.onload = async ev => {
     const p = getProject();
-    p.cableRunMap.image = ev.target.result;
-    p.cableRunMap.thumb = await _generateThumb(ev.target.result) || '';
+    const dataUrl = ev.target.result;
+    await _idbSavePhotoData('cablemap_' + p.id, dataUrl);
+    p.cableRunMap.image = dataUrl; // keep in memory for immediate rendering
+    p.cableRunMap.thumb = await _generateThumb(dataUrl) || '';
     _crPan = {x:0,y:0}; _crZoom = 1;
     logChange('Cable run map image uploaded');
     save(); renderCableRunMap(); toast('Map image uploaded','success');
@@ -287,10 +294,10 @@ function crUploadImage(e) {
 
 function crPickExistingPhoto() {
   const p = getProject();
-  const photos = (p.photos || []).filter(ph => ph.data);
+  const photos = (p.photos || []).filter(ph => ph.thumb || ph.id);
   if (photos.length === 0) return toast('No photos available','error');
   const grid = photos.map((ph, i) =>
-    `<div style="cursor:pointer;border:1px solid var(--border);border-radius:6px;overflow:hidden;aspect-ratio:4/3;background-size:cover;background-position:center;background-image:url('${ph.thumb||ph.data}')"
+    `<div style="cursor:pointer;border:1px solid var(--border);border-radius:6px;overflow:hidden;aspect-ratio:4/3;background-size:cover;background-position:center;background-image:url('${ph.thumb||''}')"
       onclick="crUseExistingPhoto(${i})" title="${esc(ph.caption||ph.name||'Photo '+(i+1))}">
     </div>`
   ).join('');
@@ -305,11 +312,14 @@ function crPickExistingPhoto() {
   `, '600px');
 }
 
-function crUseExistingPhoto(idx) {
+async function crUseExistingPhoto(idx) {
   const p = getProject();
   const ph = p.photos[idx];
-  if (!ph?.data) return;
-  p.cableRunMap.image = ph.data;
+  if (!ph) return;
+  const photoData = ph.data || await _idbGetPhotoData(ph.id);
+  if (!photoData) return toast('Photo data not found', 'error');
+  await _idbSavePhotoData('cablemap_' + p.id, photoData);
+  p.cableRunMap.image = photoData;
   p.cableRunMap.thumb = ph.thumb || '';
   _crPan = {x:0,y:0}; _crZoom = 1;
   logChange('Cable run map: using existing photo');
@@ -321,6 +331,7 @@ function crClearImage() {
   const p = getProject();
   p.cableRunMap.image = null;
   p.cableRunMap.thumb = null;
+  _idbDeletePhotoData('cablemap_' + p.id).catch(() => {});
   logChange('Cable run map image cleared');
   save(); renderCableRunMap();
 }

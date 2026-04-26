@@ -340,9 +340,10 @@ async function gdriveSave() {
       _driveProgressUpdate(5);
 
       // ── Upload photos as individual binary files ──
-      const photos = (p.photos || []).filter(ph => ph.data);
-      const hasSiteMap = !!p.siteMap?.data;
-      const totalMedia = photos.length + (hasSiteMap ? 1 : 0);
+      const allPhotos = (p.photos || []).filter(ph => ph.id);
+      const smData = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+      const hasSiteMap = !!smData;
+      const totalMedia = allPhotos.length + (hasSiteMap ? 1 : 0);
       const driveMap = _getDriveMap(p.id);
       let mediaFolderId = driveMap.folderId || null;
 
@@ -355,27 +356,31 @@ async function gdriveSave() {
         // Upload new or changed photos (skip already-uploaded unchanged ones)
         const localIds = new Set();
         let processed = 0;
-        for (const ph of photos) {
+        for (const ph of allPhotos) {
           localIds.add(ph.id);
           const entry = driveMap[ph.id];
-          if (entry?.driveFileId && entry.dataLen === ph.data.length) { processed++; continue; }
+          const len = ph.dataLen || 0;
+          if (entry?.driveFileId && entry.dataLen === len && len > 0) { processed++; continue; }
+          const phData = ph.data || await _idbGetPhotoData(ph.id);
+          if (!phData) { processed++; continue; }
           _driveProgressUpdate(10 + (processed / totalMedia) * 55, `Uploading photo ${processed + 1} of ${totalMedia}…`);
-          const blob = _dataUrlToBlob(ph.data);
+          const blob = _dataUrlToBlob(phData);
           const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
           const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
-          driveMap[ph.id] = { driveFileId: did, dataLen: ph.data.length };
+          driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
+          if (!ph.dataLen) ph.dataLen = phData.length;
           processed++;
         }
 
         // Upload site map if new/changed
         if (hasSiteMap) {
           const smEntry = driveMap._siteMap;
-          if (!smEntry?.driveFileId || smEntry.dataLen !== p.siteMap.data.length) {
+          if (!smEntry?.driveFileId || smEntry.dataLen !== smData.length) {
             _driveProgressUpdate(66, 'Uploading site map…');
-            const blob = _dataUrlToBlob(p.siteMap.data);
+            const blob = _dataUrlToBlob(smData);
             const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
             const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
-            driveMap._siteMap = { driveFileId: did, dataLen: p.siteMap.data.length };
+            driveMap._siteMap = { driveFileId: did, dataLen: smData.length };
           }
         }
 
@@ -446,31 +451,36 @@ async function gdriveSaveAll() {
         _driveProgressUpdate(5 + (i / total) * 80, `Saving "${esc(p.name)}" (${i + 1} of ${total})…`);
         try {
           // Upload photos as separate binary files
-          const photos = (p.photos || []).filter(ph => ph.data);
-          const hasSiteMap = !!p.siteMap?.data;
+          const allPh = (p.photos || []).filter(ph => ph.id);
+          const smD = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+          const hasSM = !!smD;
           const driveMap = _getDriveMap(p.id);
           let mediaFolderId = driveMap.folderId || null;
-          if (photos.length > 0 || hasSiteMap) {
+          if (allPh.length > 0 || hasSM) {
             const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
             if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
             driveMap.folderId = mediaFolderId;
             const localIds = new Set();
-            for (const ph of photos) {
+            for (const ph of allPh) {
               localIds.add(ph.id);
               const entry = driveMap[ph.id];
-              if (entry?.driveFileId && entry.dataLen === ph.data.length) continue;
-              const blob = _dataUrlToBlob(ph.data);
+              const len = ph.dataLen || 0;
+              if (entry?.driveFileId && entry.dataLen === len && len > 0) continue;
+              const phData = ph.data || await _idbGetPhotoData(ph.id);
+              if (!phData) continue;
+              const blob = _dataUrlToBlob(phData);
               const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
               const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
-              driveMap[ph.id] = { driveFileId: did, dataLen: ph.data.length };
+              driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
+              if (!ph.dataLen) ph.dataLen = phData.length;
             }
-            if (hasSiteMap) {
+            if (hasSM) {
               const smEntry = driveMap._siteMap;
-              if (!smEntry?.driveFileId || smEntry.dataLen !== p.siteMap.data.length) {
-                const blob = _dataUrlToBlob(p.siteMap.data);
+              if (!smEntry?.driveFileId || smEntry.dataLen !== smD.length) {
+                const blob = _dataUrlToBlob(smD);
                 const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
                 const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
-                driveMap._siteMap = { driveFileId: did, dataLen: p.siteMap.data.length };
+                driveMap._siteMap = { driveFileId: did, dataLen: smD.length };
               }
             }
             for (const [key, entry] of Object.entries(driveMap)) {
@@ -622,9 +632,13 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
       try {
         const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
         const blob = await r.blob();
-        ph.data = await _blobToDataUrl(blob);
+        const dataUrl = await _blobToDataUrl(blob);
+        await _idbSavePhotoData(ph.id, dataUrl);
+        ph.data = null;
+        ph.dataLen = dataUrl.length;
         ph.size = blob.size;
-        driveMap[ph.id] = { driveFileId: f.id, dataLen: ph.data.length };
+        if (!ph.thumb) ph.thumb = await _generateThumb(dataUrl) || '';
+        driveMap[ph.id] = { driveFileId: f.id, dataLen: dataUrl.length };
       } catch(e) { console.warn('Photo download failed:', ph.id, e); }
       done++;
       if (onProgress) onProgress((done / total) * 100, `Downloading photo ${done} of ${total}…`);
@@ -638,8 +652,10 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
       const f = fileMap['sitemap'];
       const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
       const blob = await r.blob();
-      project.siteMap.data = await _blobToDataUrl(blob);
-      driveMap._siteMap = { driveFileId: f.id, dataLen: project.siteMap.data.length };
+      const smDataUrl = await _blobToDataUrl(blob);
+      await _idbSavePhotoData('sitemap_' + project.id, smDataUrl);
+      project.siteMap.data = null;
+      driveMap._siteMap = { driveFileId: f.id, dataLen: smDataUrl.length };
     } catch(e) {}
     done++;
     if (onProgress) onProgress(100, 'Photos downloaded');
@@ -765,3 +781,106 @@ async function gdriveImportFile(fileId, fileName) {
     _driveDoneModal('Download Failed', 'Error: ' + esc(err.message), 'error');
   }
 }
+
+// ═══════════════════════════════════════════
+//  BACKGROUND AUTO-SYNC TO GOOGLE DRIVE
+// ═══════════════════════════════════════════
+// After the user does at least one manual Google Drive save (which grants an OAuth token),
+// the app will silently auto-sync every 5 minutes and when the tab/app goes to background.
+
+let _autoSyncDirty = false;
+let _autoSyncTimer = null;
+const AUTO_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+// Mark the project as needing a sync whenever local data is saved
+const _origSave = typeof save === 'function' ? save : null;
+if (_origSave) {
+  window.save = function() {
+    _origSave.apply(this, arguments);
+    _autoSyncDirty = true;
+  };
+}
+
+// Quiet background sync — no modals, no progress UI
+async function _autoSyncToDrive() {
+  if (!_autoSyncDirty || !_driveToken || !navigator.onLine) return;
+  const p = getProject();
+  if (!p) return;
+  try {
+    const folderId = await _getOrCreateDriveFolder();
+    const allPh2 = (p.photos || []).filter(ph => ph.id);
+    const smD2 = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+    const hasSM2 = !!smD2;
+    const driveMap = _getDriveMap(p.id);
+    let mediaFolderId = driveMap.folderId || null;
+    if (allPh2.length > 0 || hasSM2) {
+      const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
+      if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
+      driveMap.folderId = mediaFolderId;
+      for (const ph of allPh2) {
+        const entry = driveMap[ph.id];
+        const len = ph.dataLen || 0;
+        if (entry?.driveFileId && entry.dataLen === len && len > 0) continue;
+        const phData = ph.data || await _idbGetPhotoData(ph.id);
+        if (!phData) continue;
+        const blob = _dataUrlToBlob(phData);
+        const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+        const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
+        driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
+      }
+      if (hasSM2) {
+        const smEntry = driveMap._siteMap;
+        if (!smEntry?.driveFileId || smEntry.dataLen !== smD2.length) {
+          const blob = _dataUrlToBlob(smD2);
+          const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+          const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
+          driveMap._siteMap = { driveFileId: did, dataLen: smD2.length };
+        }
+      }
+      _saveDriveMap(p.id, driveMap);
+    }
+    const stripped = _stripPhotoData(p);
+    const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
+    const content = JSON.stringify(bundle);
+    const desc = _projectDescription(p);
+    const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
+    const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+    const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+    const { files } = await search.json();
+    if (files?.length) {
+      await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
+      });
+      await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: desc })
+      });
+    } else {
+      const boundary = 'nrm' + Date.now();
+      const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', description: desc });
+      const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
+      await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
+      });
+    }
+    await _gdriveSaveManufacturers(folderId);
+    await _gdriveSaveFolders(folderId);
+    _autoSyncDirty = false;
+    console.log('[AutoSync] Synced to Google Drive');
+  } catch (e) {
+    console.warn('[AutoSync] Failed:', e.message);
+  }
+}
+
+// Start the periodic auto-sync timer
+function _startAutoSync() {
+  if (_autoSyncTimer) return;
+  _autoSyncTimer = setInterval(_autoSyncToDrive, AUTO_SYNC_INTERVAL);
+}
+
+// Sync when user leaves the app / switches tabs
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _autoSyncToDrive();
+});
+
+// Start timer on load
+_startAutoSync();

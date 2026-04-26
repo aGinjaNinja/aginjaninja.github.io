@@ -326,6 +326,10 @@ function confirmDeleteProject(id) {
   if (!p) return;
   const typed = document.getElementById('del-confirm-name')?.value?.trim();
   if (typed !== p.name) return toast('Project name does not match', 'error');
+  // Clean up photo data from separate store
+  const photoIds = (p.photos || []).map(ph => ph.id).filter(Boolean);
+  photoIds.push('sitemap_' + id, 'cablemap_' + id);
+  Promise.all(photoIds.map(pid => _idbDeletePhotoData(pid))).catch(() => {});
   state.projects = state.projects.filter(x => x.id !== id);
   _idbDeleteProject(id).catch(() => {});
   save();

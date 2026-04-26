@@ -72,10 +72,15 @@ let _smEditMode=false;
 let _smDrawing=false;
 let _smCurrentLine=null; // {points:[{x,y}...], color, label}
 
-function renderSiteMap() {
+async function renderSiteMap() {
   const p = getProject();
   if (!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
   if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
+  // Load map image from separate store if needed
+  if (!p.siteMap.data) {
+    const smData = await _idbGetPhotoData('sitemap_' + p.id);
+    if (smData) p.siteMap.data = smData;
+  }
 
   setTopbarActions(`
     <select class="form-control" style="width:160px;padding:4px 8px;font-size:12px" onchange="smSetOverlay(this.value)">
@@ -202,10 +207,12 @@ function uploadSiteMap(e) {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = async ev => {
     const p = getProject();
     if (!p.siteMap) p.siteMap={data:null,markers:[]};
-    p.siteMap.data = ev.target.result;
+    const dataUrl = ev.target.result;
+    await _idbSavePhotoData('sitemap_' + p.id, dataUrl);
+    p.siteMap.data = dataUrl; // keep in memory for immediate rendering
     _smPan={x:0,y:0}; _smZoom=1;
     logChange('Site map floor plan uploaded');
     save(); renderSiteMap(); toast('Floor plan uploaded','success');
@@ -217,6 +224,7 @@ function clearSiteMap() {
   if (!confirm('Clear the floor plan? Markers will be kept.')) return;
   const p=getProject();
   if(p.siteMap) p.siteMap.data=null;
+  _idbDeletePhotoData('sitemap_' + p.id).catch(() => {});
   logChange('Site map floor plan cleared');
   save(); renderSiteMap();
 }

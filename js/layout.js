@@ -155,6 +155,11 @@ function updateChecklistNavBadge() {
   if (el) el.innerHTML = `Checklist <span style="font-size:10px;color:${pct===100?'var(--green)':'var(--amber)'};background:${pct===100?'rgba(0,232,122,.12)':'rgba(255,170,0,.12)'};border:1px solid ${pct===100?'rgba(0,232,122,.3)':'rgba(255,170,0,.3)'};border-radius:8px;padding:0 5px;font-family:var(--mono)">${pct}%</span>`;
 }
 
+// Register service worker for offline / PWA support
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
 // Initialize an app page (called from each HTML page)
 async function initPage(viewName) {
   await load();

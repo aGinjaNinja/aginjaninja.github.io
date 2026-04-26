@@ -14,10 +14,13 @@ let _viewerPhotoIndices = [];
 // ═══════════════════════════════════════════
 //  PHOTO VIEWER (lightbox)
 // ═══════════════════════════════════════════
-function openPhotoViewer(idx) {
+async function openPhotoViewer(idx) {
   const p = getProject();
   const ph = p.photos[idx];
   if (!ph) return;
+
+  // Load full-res data on demand
+  const imgSrc = await _idbGetPhotoData(ph.id) || ph.thumb || '';
 
   // Use visible indices for prev/next; fall back to all photos
   const indices = _viewerPhotoIndices.length > 0 ? _viewerPhotoIndices : p.photos.map((_, i) => i);
@@ -36,7 +39,7 @@ function openPhotoViewer(idx) {
     <button class="pv-close" onclick="closePhotoViewer()" title="Close">✕</button>
     ${prevIdx >= 0 ? `<button class="pv-arrow pv-prev" onclick="event.stopPropagation();openPhotoViewer(${prevIdx})" title="Previous">‹</button>` : ''}
     ${nextIdx >= 0 ? `<button class="pv-arrow pv-next" onclick="event.stopPropagation();openPhotoViewer(${nextIdx})" title="Next">›</button>` : ''}
-    <img class="pv-img" src="${ph.data}" onclick="event.stopPropagation()" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
+    <img class="pv-img" src="${imgSrc}" onclick="event.stopPropagation()" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
     <div class="pv-bottom">
       <div class="pv-caption">${esc(ph.caption || ph.name || 'Photo ' + (idx + 1))}</div>
       <div class="pv-counter">${pos + 1} / ${total}</div>
@@ -407,7 +410,9 @@ function uploadPhotos(e) {
         const dataUrl = ev.target.result;
         const thumb = await _generateThumb(dataUrl);
         const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
-        p.photos.push({ id: genId(), name: file.name, caption: '', data: dataUrl, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, assignments: [], folderId: folderId || '' });
+        const photoId = genId();
+        await _idbSavePhotoData(photoId, dataUrl);
+        p.photos.push({ id: photoId, name: file.name, caption: '', data: null, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, dataLen: dataUrl.length, assignments: [], folderId: folderId || '' });
         logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
         added++;
       } catch(err) { console.error('Photo add error:', err); }
@@ -437,6 +442,7 @@ function deletePhoto(idx) {
   if (!confirm('Delete this photo?')) return;
   const ph = p.photos[idx];
   const name = ph?.caption || ph?.name || `Photo ${idx+1}`;
+  if (ph?.id) _idbDeletePhotoData(ph.id).catch(() => {});
   p.photos.splice(idx, 1);
   logChange(`Photo deleted: "${name}"`);
   save(); renderPhotos(); toast('Photo deleted', 'success');
@@ -502,12 +508,15 @@ function resolvePhotoItem(itemRef, p) {
   return { label: d.name, color: dtColor(d.deviceType||'Misc.'), notes: d.notes || '' };
 }
 
-function openPhotoEditor(idx, preservePanZoom) {
+async function openPhotoEditor(idx, preservePanZoom) {
   const isNewPhoto = (idx !== _photoEditIdx);
   _photoEditIdx = idx;
   if (!preservePanZoom) { _photoPan = { x: 0, y: 0 }; _photoZoom = 1; }
   const p = getProject();
   const ph = p.photos[idx];
+  // Load full-res data on demand for the editor
+  if (!ph.data && ph.id) ph._editorSrc = await _idbGetPhotoData(ph.id) || ph.thumb || '';
+  else ph._editorSrc = ph.data || ph.thumb || '';
   if (!ph) return;
   if (!ph.assignments || ph.assignments.length === 0) ph.assignments = [{ color: SLOT_COLORS[0] }];
   // Only auto-lock when the user navigates to a photo, not on re-renders (saves, drops, etc.)
@@ -578,7 +587,7 @@ function openPhotoEditor(idx, preservePanZoom) {
            ontouchmove="onPhotoCanvasTouchMove(event)"
            ontouchend="onPhotoCanvasTouchEnd(event)">
         <div id="photo-pan-layer">
-          <img id="photo-editor-img" src="${ph.data}" ondragstart="return false" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
+          <img id="photo-editor-img" src="${ph._editorSrc || ph.thumb || ''}" ondragstart="return false" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
           <div id="photo-markers-layer"></div>
         </div>
       </div>
@@ -1258,7 +1267,9 @@ function replacePhoto(e, idx) {
     if (!p.photos[idx]) return;
     const oldName = p.photos[idx].caption || p.photos[idx].name || `Photo ${idx+1}`;
     const dataUrl = ev.target.result;
-    p.photos[idx].data = dataUrl;
+    await _idbSavePhotoData(p.photos[idx].id, dataUrl);
+    p.photos[idx].data = null;
+    p.photos[idx].dataLen = dataUrl.length;
     p.photos[idx].thumb = await _generateThumb(dataUrl) || '';
     p.photos[idx].name = file.name;
     p.photos[idx].size = file.size;

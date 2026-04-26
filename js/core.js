@@ -236,22 +236,29 @@ let _idbInstance = null;
 function _idbOpen() {
   if (_idbInstance) return Promise.resolve(_idbInstance);
   return new Promise((res, rej) => {
-    const req = indexedDB.open('netrack_projects', 1);
+    const req = indexedDB.open('netrack_projects', 2);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('config')) db.createObjectStore('config');
+      if (!db.objectStoreNames.contains('photoData')) db.createObjectStore('photoData', { keyPath: 'id' });
     };
     req.onsuccess = e => { _idbInstance = e.target.result; res(_idbInstance); };
     req.onerror = () => rej(req.error);
+    req.onblocked = () => { console.warn('IDB blocked — close other tabs'); };
   });
 }
 
 async function _idbSaveProject(project) {
   const db = await _idbOpen();
+  // Strip heavy binary data — photos stored in separate 'photoData' store
+  const lite = { ...project };
+  if (lite.photos) lite.photos = lite.photos.map(ph => ph.data ? { ...ph, data: null } : ph);
+  if (lite.siteMap?.data) lite.siteMap = { ...lite.siteMap, data: null };
+  if (lite.cableRunMap?.image) lite.cableRunMap = { ...lite.cableRunMap, image: null };
   return new Promise((res, rej) => {
     const tx = db.transaction('projects', 'readwrite');
-    tx.objectStore('projects').put(project);
+    tx.objectStore('projects').put(lite);
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
   });
@@ -294,6 +301,38 @@ async function _idbGetConfig(key) {
     const req = tx.objectStore('config').get(key);
     req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
+  });
+}
+
+// ─── Photo Data Store (separate from project metadata for performance) ───
+
+async function _idbSavePhotoData(id, dataUrl) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('photoData', 'readwrite');
+    tx.objectStore('photoData').put({ id, data: dataUrl });
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+async function _idbGetPhotoData(id) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('photoData', 'readonly');
+    const req = tx.objectStore('photoData').get(id);
+    req.onsuccess = () => res(req.result?.data || null);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+async function _idbDeletePhotoData(id) {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('photoData', 'readwrite');
+    tx.objectStore('photoData').delete(id);
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
   });
 }
 
@@ -346,9 +385,9 @@ function closeSidebarDropdowns() {
   });
 }
 
-// Build project export as a Blob, stringifying values in small chunks
-// to avoid hitting JS engine string-length limits on large projects
-function _buildProjectBlob(p) {
+// Build project export as a Blob, pulling photo data from IDB on demand.
+// Stringifies each photo individually to avoid V8 string-length limits.
+async function _buildProjectBlob(p) {
   const parts = [];
   parts.push('{"_netrack_version":2,"typeColors":');
   parts.push(JSON.stringify(state.typeColors || {}));
@@ -361,43 +400,31 @@ function _buildProjectBlob(p) {
     const k = keys[ki];
     if (ki > 0) parts.push(',');
     parts.push(JSON.stringify(k) + ':');
-    _blobifyValue(parts, p[k]);
+
+    if (k === 'photos' && Array.isArray(p.photos)) {
+      // Reconstitute each photo's data from IDB individually
+      parts.push('[');
+      for (let i = 0; i < p.photos.length; i++) {
+        if (i > 0) parts.push(',');
+        const ph = { ...p.photos[i] };
+        if (!ph.data && ph.id) ph.data = await _idbGetPhotoData(ph.id);
+        parts.push(JSON.stringify(ph));
+      }
+      parts.push(']');
+    } else if (k === 'siteMap' && p.siteMap) {
+      const sm = { ...p.siteMap };
+      if (!sm.data) sm.data = await _idbGetPhotoData('sitemap_' + p.id);
+      parts.push(JSON.stringify(sm));
+    } else if (k === 'cableRunMap' && p.cableRunMap) {
+      const cr = { ...p.cableRunMap };
+      if (!cr.image) cr.image = await _idbGetPhotoData('cablemap_' + p.id);
+      parts.push(JSON.stringify(cr));
+    } else {
+      parts.push(JSON.stringify(p[k]));
+    }
   }
   parts.push('}}');
   return new Blob(parts, { type: 'application/json' });
-}
-
-// Recursively stringify a value into Blob parts so no single
-// JSON.stringify call handles more than one array element or object key
-function _blobifyValue(parts, val) {
-  if (val === null || val === undefined) { parts.push('null'); return; }
-  if (Array.isArray(val)) {
-    parts.push('[');
-    for (let i = 0; i < val.length; i++) {
-      if (i > 0) parts.push(',');
-      _blobifyValue(parts, val[i]);
-    }
-    parts.push(']');
-  } else if (typeof val === 'object') {
-    parts.push('{');
-    const okeys = Object.keys(val);
-    for (let oi = 0; oi < okeys.length; oi++) {
-      if (oi > 0) parts.push(',');
-      parts.push(JSON.stringify(okeys[oi]) + ':');
-      const v = val[okeys[oi]];
-      // Strings over 1MB get pushed directly (they're already safe as single values)
-      if (typeof v === 'string' && v.length > 1000000) {
-        parts.push(JSON.stringify(v));
-      } else if (typeof v === 'object' && v !== null) {
-        _blobifyValue(parts, v);
-      } else {
-        parts.push(JSON.stringify(v));
-      }
-    }
-    parts.push('}');
-  } else {
-    parts.push(JSON.stringify(val));
-  }
 }
 
 async function globalSave() {
@@ -425,7 +452,7 @@ async function globalSave() {
     const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.json`;
 
     // Build JSON as Blob parts to avoid V8 string length limits with large photo data
-    const blob = _buildProjectBlob(p);
+    const blob = await _buildProjectBlob(p);
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     if (isMobile) {
@@ -489,6 +516,39 @@ async function globalSave() {
  }
 }
 
+// Migrate inline photo data to separate IDB store (runs once)
+async function _migratePhotosToSeparateStore() {
+  const done = await _idbGetConfig('photoMigrationDone');
+  if (done) return;
+  let migrated = false;
+  for (const p of state.projects) {
+    for (const ph of (p.photos || [])) {
+      if (ph.data) {
+        if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+        if (!ph.dataLen) ph.dataLen = ph.data.length;
+        await _idbSavePhotoData(ph.id, ph.data);
+        ph.data = null;
+        migrated = true;
+      }
+    }
+    if (p.siteMap?.data) {
+      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+      p.siteMap.data = null;
+      migrated = true;
+    }
+    if (p.cableRunMap?.image) {
+      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+      p.cableRunMap.image = null;
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    await Promise.all(state.projects.map(p => _idbSaveProject(p)));
+    console.log('[Migration] Photo data moved to separate IDB store');
+  }
+  await _idbSaveConfig('photoMigrationDone', true);
+}
+
 async function load() {
   try {
     // Primary: load from IndexedDB (large quota)
@@ -530,6 +590,8 @@ async function load() {
   try { state.projectFolders = (await _idbGetConfig('projectFolders')) || []; } catch(e) {}
   // Migrate per-project vendors → global (one-time)
   _migrateProjectVendorsToGlobal();
+  // Migrate inline photo data to separate store (one-time)
+  await _migratePhotosToSeparateStore();
 }
 
 function getProject() {
@@ -1086,7 +1148,7 @@ function importData() { document.getElementById('import-input')?.click(); }
 function handleImport(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
-  reader.onload = (ev) => {
+  reader.onload = async (ev) => {
     let p = null, importedColors = null, importedVendors = null;
     try {
       let parsed = JSON.parse(ev.target.result);
@@ -1106,6 +1168,23 @@ function handleImport(e) {
       e.target.value = '';
       return;
     }
+    // Extract inline photo data to separate IDB store
+    for (const ph of (p.photos || [])) {
+      if (ph.data) {
+        if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+        if (!ph.dataLen) ph.dataLen = ph.data.length;
+        await _idbSavePhotoData(ph.id, ph.data);
+        ph.data = null;
+      }
+    }
+    if (p.siteMap?.data) {
+      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+      p.siteMap.data = null;
+    }
+    if (p.cableRunMap?.image) {
+      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+      p.cableRunMap.image = null;
+    }
     const existing = state.projects.findIndex(x => x.id === p.id);
     if (existing >= 0) {
       if (!confirm(`Project "${p.name}" already exists. Overwrite?`)) { e.target.value = ''; return; }
@@ -1116,7 +1195,6 @@ function handleImport(e) {
     if (importedColors) {
       state.typeColors = Object.assign({}, importedColors, state.typeColors);
     }
-    // Merge imported global vendors (deduplicate by name)
     if (importedVendors && importedVendors.length > 0) {
       const existingNames = new Set(state.globalVendors.map(v => (v.name||'').toLowerCase()));
       importedVendors.forEach(v => {
