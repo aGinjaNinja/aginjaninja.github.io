@@ -111,7 +111,7 @@ async function renderCableRunMap() {
   const m = p.cableRunMap;
   // Load map image from separate store if needed
   if (!m.image) {
-    const imgData = await _idbGetPhotoData('cablemap_' + p.id);
+    const imgData = await _lazyGetPhotoData('cablemap_' + p.id);
     if (imgData) m.image = imgData;
   }
 
@@ -316,7 +316,7 @@ async function crUseExistingPhoto(idx) {
   const p = getProject();
   const ph = p.photos[idx];
   if (!ph) return;
-  const photoData = ph.data || await _idbGetPhotoData(ph.id);
+  const photoData = ph.data || await _lazyGetPhotoData(ph.id);
   if (!photoData) return toast('Photo data not found', 'error');
   await _idbSavePhotoData('cablemap_' + p.id, photoData);
   p.cableRunMap.image = photoData;
