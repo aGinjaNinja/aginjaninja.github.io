@@ -341,7 +341,7 @@ async function gdriveSave() {
 
       // ── Upload photos as individual binary files ──
       const allPhotos = (p.photos || []).filter(ph => ph.id);
-      const smData = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+      const smData = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
       const hasSiteMap = !!smData;
       const totalMedia = allPhotos.length + (hasSiteMap ? 1 : 0);
       const driveMap = _getDriveMap(p.id);
@@ -361,7 +361,7 @@ async function gdriveSave() {
           const entry = driveMap[ph.id];
           const len = ph.dataLen || 0;
           if (entry?.driveFileId && entry.dataLen === len && len > 0) { processed++; continue; }
-          const phData = ph.data || await _idbGetPhotoData(ph.id);
+          const phData = ph.data || await _lazyGetPhotoData(ph.id);
           if (!phData) { processed++; continue; }
           _driveProgressUpdate(10 + (processed / totalMedia) * 55, `Uploading photo ${processed + 1} of ${totalMedia}…`);
           const blob = _dataUrlToBlob(phData);
@@ -452,7 +452,7 @@ async function gdriveSaveAll() {
         try {
           // Upload photos as separate binary files
           const allPh = (p.photos || []).filter(ph => ph.id);
-          const smD = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+          const smD = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
           const hasSM = !!smD;
           const driveMap = _getDriveMap(p.id);
           let mediaFolderId = driveMap.folderId || null;
@@ -466,7 +466,7 @@ async function gdriveSaveAll() {
               const entry = driveMap[ph.id];
               const len = ph.dataLen || 0;
               if (entry?.driveFileId && entry.dataLen === len && len > 0) continue;
-              const phData = ph.data || await _idbGetPhotoData(ph.id);
+              const phData = ph.data || await _lazyGetPhotoData(ph.id);
               if (!phData) continue;
               const blob = _dataUrlToBlob(phData);
               const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
@@ -663,6 +663,21 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
   _saveDriveMap(project.id, driveMap);
 }
 
+// Index photos in a Drive media folder without downloading them (lazy loading)
+async function _indexDrivePhotos(project, mediaFolderId) {
+  const files = await _listDriveFolder(mediaFolderId);
+  const driveMap = { folderId: mediaFolderId };
+  for (const f of files) {
+    const name = f.name.replace(/\.[^.]+$/, '');
+    if (name === 'sitemap') {
+      driveMap._siteMap = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
+    } else {
+      driveMap[name] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
+    }
+  }
+  _saveDriveMap(project.id, driveMap);
+}
+
 // Downloads one project from Drive, saves to IDB, and opens it
 async function openDriveProject(driveFileId) {
   if (!_driveToken) {
@@ -686,9 +701,10 @@ async function openDriveProject(driveFileId) {
     if (!p.id || !p.name) throw new Error('Missing project id or name');
     migrateProject(p);
 
-    // Download photos from separate media folder (new format)
+    // Index photos on Drive (lazy — full data fetched on demand when viewed)
     if (parsed._separateMedia && mediaFolderId) {
-      await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
+      _driveProgressUpdate(30, 'Indexing photos on Drive…');
+      await _indexDrivePhotos(p, mediaFolderId);
     }
 
     // Extract inline photo data to separate IDB store (old format or embedded data)
@@ -763,9 +779,10 @@ async function gdriveImportFile(fileId, fileName) {
     if (!p.id || !p.name) throw new Error('Missing project id or name');
     migrateProject(p);
 
-    // Download photos from separate media folder (new format)
+    // Index photos on Drive (lazy — full data fetched on demand when viewed)
     if (parsed._separateMedia && mediaFolderId) {
-      await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
+      _driveProgressUpdate(30, 'Indexing photos on Drive…');
+      await _indexDrivePhotos(p, mediaFolderId);
     }
 
     // Extract inline photo data to separate IDB store (old format or embedded data)
@@ -847,7 +864,7 @@ async function _autoSyncToDrive() {
   try {
     const folderId = await _getOrCreateDriveFolder();
     const allPh2 = (p.photos || []).filter(ph => ph.id);
-    const smD2 = p.siteMap?.data || await _idbGetPhotoData('sitemap_' + p.id);
+    const smD2 = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
     const hasSM2 = !!smD2;
     const driveMap = _getDriveMap(p.id);
     let mediaFolderId = driveMap.folderId || null;
@@ -859,7 +876,7 @@ async function _autoSyncToDrive() {
         const entry = driveMap[ph.id];
         const len = ph.dataLen || 0;
         if (entry?.driveFileId && entry.dataLen === len && len > 0) continue;
-        const phData = ph.data || await _idbGetPhotoData(ph.id);
+        const phData = ph.data || await _lazyGetPhotoData(ph.id);
         if (!phData) continue;
         const blob = _dataUrlToBlob(phData);
         const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');

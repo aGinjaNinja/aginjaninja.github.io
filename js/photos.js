@@ -20,7 +20,7 @@ async function openPhotoViewer(idx) {
   if (!ph) return;
 
   // Load full-res data on demand
-  const imgSrc = await _idbGetPhotoData(ph.id) || ph.thumb || '';
+  const imgSrc = await _lazyGetPhotoData(ph.id) || ph.thumb || '';
 
   // Use visible indices for prev/next; fall back to all photos
   const indices = _viewerPhotoIndices.length > 0 ? _viewerPhotoIndices : p.photos.map((_, i) => i);
@@ -598,7 +598,7 @@ async function openPhotoEditor(idx, preservePanZoom) {
   const p = getProject();
   const ph = p.photos[idx];
   // Load full-res data on demand for the editor
-  if (!ph.data && ph.id) ph._editorSrc = await _idbGetPhotoData(ph.id) || ph.thumb || '';
+  if (!ph.data && ph.id) ph._editorSrc = await _lazyGetPhotoData(ph.id) || ph.thumb || '';
   else ph._editorSrc = ph.data || ph.thumb || '';
   if (!ph) return;
   if (!ph.assignments || ph.assignments.length === 0) ph.assignments = [{ color: SLOT_COLORS[0] }];
@@ -1454,7 +1454,7 @@ async function downloadPhotosAsZip() {
   let count = 0;
 
   for (const ph of p.photos) {
-    const data = await _idbGetPhotoData(ph.id);
+    const data = await _lazyGetPhotoData(ph.id);
     if (!data) continue;
 
     const folderPath = _getPhotoFolderPath(p.photoFolders || [], ph.folderId);

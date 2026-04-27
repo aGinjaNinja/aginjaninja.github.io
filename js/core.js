@@ -327,6 +327,36 @@ async function _idbGetPhotoData(id) {
   });
 }
 
+// Lazy photo loader: tries IDB first, falls back to Google Drive on demand
+async function _lazyGetPhotoData(id) {
+  const data = await _idbGetPhotoData(id);
+  if (data) return data;
+  // Try fetching from Drive if signed in
+  if (typeof _driveToken === 'undefined' || !_driveToken || typeof _driveFetch !== 'function' || typeof _getDriveMap !== 'function') return null;
+  let projectId, mapKey;
+  if (id.startsWith('sitemap_')) { projectId = id.slice(8); mapKey = '_siteMap'; }
+  else if (id.startsWith('cablemap_')) { projectId = id.slice(9); mapKey = '_cableMap'; }
+  else { const p = getProject(); if (!p) return null; projectId = p.id; mapKey = id; }
+  const driveMap = _getDriveMap(projectId);
+  const entry = driveMap[mapKey];
+  if (!entry?.driveFileId) return null;
+  try {
+    const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${entry.driveFileId}?alt=media`);
+    const blob = await r.blob();
+    const fetched = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.onerror = rej;
+      reader.readAsDataURL(blob);
+    });
+    await _idbSavePhotoData(id, fetched);
+    return fetched;
+  } catch (e) {
+    console.warn('Drive photo fetch failed:', id, e);
+    return null;
+  }
+}
+
 async function _idbDeletePhotoData(id) {
   const db = await _idbOpen();
   return new Promise((res, rej) => {
@@ -409,17 +439,17 @@ async function _buildProjectBlob(p) {
         if (i > 0) parts.push(',');
         const ph = { ...p.photos[i] };
         delete ph._editorSrc; // runtime-only, not for export
-        if (!ph.data && ph.id) ph.data = await _idbGetPhotoData(ph.id);
+        if (!ph.data && ph.id) ph.data = await _lazyGetPhotoData(ph.id);
         parts.push(JSON.stringify(ph));
       }
       parts.push(']');
     } else if (k === 'siteMap' && p.siteMap) {
       const sm = { ...p.siteMap };
-      if (!sm.data) sm.data = await _idbGetPhotoData('sitemap_' + p.id);
+      if (!sm.data) sm.data = await _lazyGetPhotoData('sitemap_' + p.id);
       parts.push(JSON.stringify(sm));
     } else if (k === 'cableRunMap' && p.cableRunMap) {
       const cr = { ...p.cableRunMap };
-      if (!cr.image) cr.image = await _idbGetPhotoData('cablemap_' + p.id);
+      if (!cr.image) cr.image = await _lazyGetPhotoData('cablemap_' + p.id);
       parts.push(JSON.stringify(cr));
     } else {
       parts.push(JSON.stringify(p[k]));
@@ -427,6 +457,75 @@ async function _buildProjectBlob(p) {
   }
   parts.push('}}');
   return new Blob(parts, { type: 'application/json' });
+}
+
+// Dynamically load JSZip from CDN if not already present
+async function _ensureJSZip() {
+  if (typeof JSZip !== 'undefined') return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load JSZip library'));
+    document.head.appendChild(s);
+  });
+}
+
+// Build project export as a ZIP: project.json (metadata) + individual photo files
+async function _buildProjectZip(p) {
+  await _ensureJSZip();
+  const zip = new JSZip();
+
+  // Build lightweight project metadata (strip photo binary data)
+  const proj = {};
+  for (const k of Object.keys(p)) {
+    if (k === 'photos' && Array.isArray(p.photos)) {
+      proj.photos = p.photos.map(ph => {
+        const copy = { ...ph };
+        delete copy.data;
+        delete copy._editorSrc;
+        return copy;
+      });
+    } else if (k === 'siteMap' && p.siteMap) {
+      const sm = { ...p.siteMap };
+      delete sm.data;
+      proj.siteMap = sm;
+    } else if (k === 'cableRunMap' && p.cableRunMap) {
+      const cr = { ...p.cableRunMap };
+      delete cr.image;
+      proj.cableRunMap = cr;
+    } else {
+      proj[k] = p[k];
+    }
+  }
+
+  zip.file('project.json', JSON.stringify({
+    _netrack_version: 2,
+    typeColors: state.typeColors || {},
+    globalVendors: state.globalVendors || [],
+    project: proj
+  }));
+
+  // Add each photo as a separate file (data URL text)
+  for (const ph of (p.photos || [])) {
+    if (!ph.id) continue;
+    const data = ph.data || await _lazyGetPhotoData(ph.id);
+    if (data) zip.file('media/photos/' + ph.id, data);
+  }
+
+  // Site map
+  if (p.siteMap) {
+    const smData = p.siteMap.data || await _lazyGetPhotoData('sitemap_' + p.id);
+    if (smData) zip.file('media/sitemap', smData);
+  }
+
+  // Cable run map
+  if (p.cableRunMap) {
+    const crData = p.cableRunMap.image || await _lazyGetPhotoData('cablemap_' + p.id);
+    if (crData) zip.file('media/cablemap', crData);
+  }
+
+  return zip.generateAsync({ type: 'blob' });
 }
 
 async function globalSave() {
@@ -451,15 +550,15 @@ async function globalSave() {
   // Always export the current project as a JSON file
   const p = getProject();
   if (p) {
-    const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.json`;
+    const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.zip`;
 
-    // Build JSON as Blob parts to avoid V8 string length limits with large photo data
-    const blob = await _buildProjectBlob(p);
+    // Build ZIP with project.json + individual photo files to avoid memory limits
+    const blob = await _buildProjectZip(p);
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     if (isMobile) {
       // Mobile: try Web Share API first, then show a tappable download modal
-      const file = new File([blob], defaultName, { type: 'application/json' });
+      const file = new File([blob], defaultName, { type: 'application/zip' });
       let shared = false;
       try {
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1128,10 +1227,10 @@ async function lookupMacManufacturers() {
 async function exportData() {
   try {
     const p = getProject();
-    const blob = await _buildProjectBlob(p);
+    const blob = await _buildProjectZip(p);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `${p.name.replace(/\s+/g,'_')}_netrack.json`;
+    a.href = url; a.download = `${p.name.replace(/\s+/g,'_')}_netrack.zip`;
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
@@ -1149,55 +1248,109 @@ function importData() { document.getElementById('import-input')?.click(); }
 async function handleImport(e) {
   const file = e.target.files[0]; if (!file) return;
   let p = null, importedColors = null, importedVendors = null;
+
+  const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
+
   try {
-    // Use Response.json() which handles large files better than FileReader.readAsText
-    let parsed;
-    try {
-      parsed = await new Response(file).json();
-    } catch (parseErr) {
-      // Fallback to FileReader for older browsers
-      const text = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.onerror = () => rej(new Error('Could not read file'));
-        reader.readAsText(file);
-      });
-      parsed = JSON.parse(text);
-    }
-    if (parsed._netrack_version === 2 && parsed.project) {
-      p = parsed.project;
-      importedColors = parsed.typeColors;
-      importedVendors = parsed.globalVendors;
-    } else if (parsed.id && parsed.name) {
-      p = parsed;
+    if (isZip) {
+      // ─── ZIP format: project.json + individual photo files ───
+      await _ensureJSZip();
+      const zip = await JSZip.loadAsync(file);
+      const projFile = zip.file('project.json');
+      if (!projFile) throw new Error('ZIP does not contain project.json');
+      const parsed = JSON.parse(await projFile.async('text'));
+
+      if (parsed._netrack_version === 2 && parsed.project) {
+        p = parsed.project;
+        importedColors = parsed.typeColors;
+        importedVendors = parsed.globalVendors;
+      } else if (parsed.id && parsed.name) {
+        p = parsed;
+      } else {
+        throw new Error('Unrecognised file format');
+      }
+      if (!p.id || !p.name) throw new Error('Missing project id or name');
+      migrateProject(p);
+
+      // Extract photos from ZIP to IDB one at a time (avoids loading all into RAM)
+      for (const ph of (p.photos || [])) {
+        if (!ph.id) continue;
+        const photoFile = zip.file('media/photos/' + ph.id);
+        if (photoFile) {
+          const data = await photoFile.async('text');
+          if (!ph.thumb) ph.thumb = await _generateThumb(data) || '';
+          if (!ph.dataLen) ph.dataLen = data.length;
+          await _idbSavePhotoData(ph.id, data);
+        }
+        ph.data = null;
+        delete ph._editorSrc;
+      }
+
+      // Site map
+      const smFile = zip.file('media/sitemap');
+      if (smFile && p.siteMap) {
+        await _idbSavePhotoData('sitemap_' + p.id, await smFile.async('text'));
+        p.siteMap.data = null;
+      }
+
+      // Cable run map
+      const crFile = zip.file('media/cablemap');
+      if (crFile && p.cableRunMap) {
+        await _idbSavePhotoData('cablemap_' + p.id, await crFile.async('text'));
+        p.cableRunMap.image = null;
+      }
+
     } else {
-      throw new Error('Unrecognised file format');
+      // ─── Legacy JSON format ───
+      let parsed;
+      try {
+        parsed = await new Response(file).json();
+      } catch (parseErr) {
+        const text = await new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result);
+          reader.onerror = () => rej(new Error('Could not read file'));
+          reader.readAsText(file);
+        });
+        parsed = JSON.parse(text);
+      }
+      if (parsed._netrack_version === 2 && parsed.project) {
+        p = parsed.project;
+        importedColors = parsed.typeColors;
+        importedVendors = parsed.globalVendors;
+      } else if (parsed.id && parsed.name) {
+        p = parsed;
+      } else {
+        throw new Error('Unrecognised file format');
+      }
+      if (!p.id || !p.name) throw new Error('Missing project id or name');
+      migrateProject(p);
+
+      // Extract inline photo data to IDB
+      for (const ph of (p.photos || [])) {
+        if (ph.data) {
+          if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+          if (!ph.dataLen) ph.dataLen = ph.data.length;
+          await _idbSavePhotoData(ph.id, ph.data);
+          ph.data = null;
+        }
+        delete ph._editorSrc;
+      }
+      if (p.siteMap?.data) {
+        await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+        p.siteMap.data = null;
+      }
+      if (p.cableRunMap?.image) {
+        await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+        p.cableRunMap.image = null;
+      }
     }
-    if (!p.id || !p.name) throw new Error('Missing project id or name');
-    migrateProject(p);
   } catch(err) {
     toast(`Import failed: ${err.message || 'Invalid project file'}`, 'error');
     e.target.value = '';
     return;
   }
-  // Extract inline photo data to separate IDB store
-  for (const ph of (p.photos || [])) {
-    if (ph.data) {
-      if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
-      if (!ph.dataLen) ph.dataLen = ph.data.length;
-      await _idbSavePhotoData(ph.id, ph.data);
-      ph.data = null;
-    }
-    delete ph._editorSrc; // strip runtime-only field
-  }
-  if (p.siteMap?.data) {
-    await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-    p.siteMap.data = null;
-  }
-  if (p.cableRunMap?.image) {
-    await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
-    p.cableRunMap.image = null;
-  }
+
   const existing = state.projects.findIndex(x => x.id === p.id);
   if (existing >= 0) {
     if (!confirm(`Project "${p.name}" already exists. Overwrite?`)) { e.target.value = ''; return; }

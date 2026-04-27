@@ -78,7 +78,7 @@ async function renderSiteMap() {
   if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
   // Load map image from separate store if needed
   if (!p.siteMap.data) {
-    const smData = await _idbGetPhotoData('sitemap_' + p.id);
+    const smData = await _lazyGetPhotoData('sitemap_' + p.id);
     if (smData) p.siteMap.data = smData;
   }
 
