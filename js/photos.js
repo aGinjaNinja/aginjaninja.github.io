@@ -76,7 +76,7 @@ function renderPhotos() {
   _photoEditIdx = -1;
 
   // Validate current folder still exists
-  if (_currentPhotoFolderId !== 'all' && !p.photoFolders.find(f => f.id === _currentPhotoFolderId)) {
+  if (_currentPhotoFolderId !== 'all' && _currentPhotoFolderId !== '' && !p.photoFolders.find(f => f.id === _currentPhotoFolderId)) {
     _currentPhotoFolderId = 'all';
   }
 
