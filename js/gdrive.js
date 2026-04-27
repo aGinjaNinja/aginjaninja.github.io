@@ -691,6 +691,25 @@ async function openDriveProject(driveFileId) {
       await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
     }
 
+    // Extract inline photo data to separate IDB store (old format or embedded data)
+    _driveProgressUpdate(60, 'Extracting photo data…');
+    for (const ph of (p.photos || [])) {
+      if (ph.data) {
+        if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+        if (!ph.dataLen) ph.dataLen = ph.data.length;
+        await _idbSavePhotoData(ph.id, ph.data);
+        ph.data = null;
+      }
+    }
+    if (p.siteMap?.data) {
+      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+      p.siteMap.data = null;
+    }
+    if (p.cableRunMap?.image) {
+      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+      p.cableRunMap.image = null;
+    }
+
     _driveProgressUpdate(65, 'Saving to local storage…');
     await _idbSaveProject(p);
     const existing = state.projects.findIndex(x => x.id === p.id);
@@ -747,6 +766,25 @@ async function gdriveImportFile(fileId, fileName) {
     // Download photos from separate media folder (new format)
     if (parsed._separateMedia && mediaFolderId) {
       await _downloadDrivePhotos(p, mediaFolderId, (pct, msg) => _driveProgressUpdate(20 + pct * 0.4, msg));
+    }
+
+    // Extract inline photo data to separate IDB store (old format or embedded data)
+    _driveProgressUpdate(60, 'Extracting photo data…');
+    for (const ph of (p.photos || [])) {
+      if (ph.data) {
+        if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+        if (!ph.dataLen) ph.dataLen = ph.data.length;
+        await _idbSavePhotoData(ph.id, ph.data);
+        ph.data = null;
+      }
+    }
+    if (p.siteMap?.data) {
+      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+      p.siteMap.data = null;
+    }
+    if (p.cableRunMap?.image) {
+      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+      p.cableRunMap.image = null;
     }
 
     _driveProgressUpdate(65, 'Saving to local storage…');

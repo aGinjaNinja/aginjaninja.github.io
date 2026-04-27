@@ -261,6 +261,7 @@ async function _idbSaveProject(project) {
     tx.objectStore('projects').put(lite);
     tx.oncomplete = () => res();
     tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error || new Error('IDB transaction aborted'));
   });
 }
 
