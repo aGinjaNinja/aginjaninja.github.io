@@ -408,6 +408,7 @@ async function _buildProjectBlob(p) {
       for (let i = 0; i < p.photos.length; i++) {
         if (i > 0) parts.push(',');
         const ph = { ...p.photos[i] };
+        delete ph._editorSrc; // runtime-only, not for export
         if (!ph.data && ph.id) ph.data = await _idbGetPhotoData(ph.id);
         parts.push(JSON.stringify(ph));
       }
@@ -1124,93 +1125,102 @@ async function lookupMacManufacturers() {
 
 
 // ─── Import / Export (needed from sidebar on every page) ───
-function exportData() {
-  const p = getProject();
-  const bundle = {
-    _netrack_version: 2,
-    typeColors: state.typeColors || {},
-    globalVendors: state.globalVendors || [],
-    project: p
-  };
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `${p.name.replace(/\s+/g,'_')}_netrack.json`;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
-  logChange('Project exported manually');
-  toast('Project exported', 'success');
+async function exportData() {
+  try {
+    const p = getProject();
+    const blob = await _buildProjectBlob(p);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${p.name.replace(/\s+/g,'_')}_netrack.json`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
+    logChange('Project exported manually');
+    toast('Project exported', 'success');
+  } catch (err) {
+    console.error('Export error:', err);
+    toast('Export failed: ' + err.message, 'error');
+  }
 }
 
 function importData() { document.getElementById('import-input')?.click(); }
 
-function handleImport(e) {
+async function handleImport(e) {
   const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (ev) => {
-    let p = null, importedColors = null, importedVendors = null;
+  let p = null, importedColors = null, importedVendors = null;
+  try {
+    // Use Response.json() which handles large files better than FileReader.readAsText
+    let parsed;
     try {
-      let parsed = JSON.parse(ev.target.result);
-      if (parsed._netrack_version === 2 && parsed.project) {
-        p = parsed.project;
-        importedColors = parsed.typeColors;
-        importedVendors = parsed.globalVendors;
-      } else if (parsed.id && parsed.name) {
-        p = parsed;
-      } else {
-        throw new Error('Unrecognised file format');
-      }
-      if (!p.id || !p.name) throw new Error('Missing project id or name');
-      migrateProject(p);
-    } catch(err) {
-      toast(`Import failed: ${err.message || 'Invalid project file'}`, 'error');
-      e.target.value = '';
-      return;
-    }
-    // Extract inline photo data to separate IDB store
-    for (const ph of (p.photos || [])) {
-      if (ph.data) {
-        if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
-        if (!ph.dataLen) ph.dataLen = ph.data.length;
-        await _idbSavePhotoData(ph.id, ph.data);
-        ph.data = null;
-      }
-    }
-    if (p.siteMap?.data) {
-      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-      p.siteMap.data = null;
-    }
-    if (p.cableRunMap?.image) {
-      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
-      p.cableRunMap.image = null;
-    }
-    const existing = state.projects.findIndex(x => x.id === p.id);
-    if (existing >= 0) {
-      if (!confirm(`Project "${p.name}" already exists. Overwrite?`)) { e.target.value = ''; return; }
-      state.projects[existing] = p;
-    } else {
-      state.projects.push(p);
-    }
-    if (importedColors) {
-      state.typeColors = Object.assign({}, importedColors, state.typeColors);
-    }
-    if (importedVendors && importedVendors.length > 0) {
-      const existingNames = new Set(state.globalVendors.map(v => (v.name||'').toLowerCase()));
-      importedVendors.forEach(v => {
-        const key = (v.name||'').toLowerCase();
-        if (key && !existingNames.has(key)) {
-          state.globalVendors.push({ ...v });
-          existingNames.add(key);
-        }
+      parsed = await new Response(file).json();
+    } catch (parseErr) {
+      // Fallback to FileReader for older browsers
+      const text = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = () => rej(new Error('Could not read file'));
+        reader.readAsText(file);
       });
-      saveGlobalVendors();
+      parsed = JSON.parse(text);
     }
-    save();
-    if (typeof renderProjects === 'function') renderProjects();
-    toast('Project imported', 'success');
+    if (parsed._netrack_version === 2 && parsed.project) {
+      p = parsed.project;
+      importedColors = parsed.typeColors;
+      importedVendors = parsed.globalVendors;
+    } else if (parsed.id && parsed.name) {
+      p = parsed;
+    } else {
+      throw new Error('Unrecognised file format');
+    }
+    if (!p.id || !p.name) throw new Error('Missing project id or name');
+    migrateProject(p);
+  } catch(err) {
+    toast(`Import failed: ${err.message || 'Invalid project file'}`, 'error');
     e.target.value = '';
-  };
-  reader.readAsText(file);
+    return;
+  }
+  // Extract inline photo data to separate IDB store
+  for (const ph of (p.photos || [])) {
+    if (ph.data) {
+      if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
+      if (!ph.dataLen) ph.dataLen = ph.data.length;
+      await _idbSavePhotoData(ph.id, ph.data);
+      ph.data = null;
+    }
+    delete ph._editorSrc; // strip runtime-only field
+  }
+  if (p.siteMap?.data) {
+    await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
+    p.siteMap.data = null;
+  }
+  if (p.cableRunMap?.image) {
+    await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
+    p.cableRunMap.image = null;
+  }
+  const existing = state.projects.findIndex(x => x.id === p.id);
+  if (existing >= 0) {
+    if (!confirm(`Project "${p.name}" already exists. Overwrite?`)) { e.target.value = ''; return; }
+    state.projects[existing] = p;
+  } else {
+    state.projects.push(p);
+  }
+  if (importedColors) {
+    state.typeColors = Object.assign({}, importedColors, state.typeColors);
+  }
+  if (importedVendors && importedVendors.length > 0) {
+    const existingNames = new Set(state.globalVendors.map(v => (v.name||'').toLowerCase()));
+    importedVendors.forEach(v => {
+      const key = (v.name||'').toLowerCase();
+      if (key && !existingNames.has(key)) {
+        state.globalVendors.push({ ...v });
+        existingNames.add(key);
+      }
+    });
+    saveGlobalVendors();
+  }
+  save();
+  if (typeof renderProjects === 'function') renderProjects();
+  toast('Project imported', 'success');
+  e.target.value = '';
 }
