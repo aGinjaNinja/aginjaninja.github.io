@@ -1245,9 +1245,54 @@ async function exportData() {
 
 function importData() { document.getElementById('import-input')?.click(); }
 
+// Memory-efficient JSON import: strips large data URIs from the raw text and
+// saves each one to IDB individually, then parses the now-small JSON string.
+// This avoids the 3-4x memory multiplier of JSON.parse on huge files.
+async function _streamingJsonImport(file) {
+  let text = await file.text();
+  const dataPattern = /"(data|image)"\s*:\s*"(data:image\/[^"]*)"/g;
+  const entries = [];
+  let tempCount = 0;
+
+  try {
+    let m;
+    while ((m = dataPattern.exec(text)) !== null) {
+      const tempKey = `_import_temp_${tempCount}`;
+      await _idbSavePhotoData(tempKey, m[2]);
+      entries.push({ start: m.index, end: m.index + m[0].length, fieldName: m[1], tempKey });
+      tempCount++;
+    }
+
+    // Rebuild text with small placeholders instead of huge data URIs
+    const parts = [];
+    let pos = 0;
+    for (const e of entries) {
+      parts.push(text.substring(pos, e.start));
+      parts.push(`"${e.fieldName}":"${e.tempKey}"`);
+      pos = e.end;
+    }
+    parts.push(text.substring(pos));
+    text = null; // allow GC to reclaim the large string
+
+    return { parsed: JSON.parse(parts.join('')), tempCount };
+  } catch (err) {
+    for (let i = 0; i < tempCount; i++) {
+      try { await _idbDeletePhotoData(`_import_temp_${i}`); } catch(e) {}
+    }
+    throw err;
+  }
+}
+
+async function _cleanupImportTemp(count) {
+  for (let i = 0; i < count; i++) {
+    try { await _idbDeletePhotoData(`_import_temp_${i}`); } catch(e) {}
+  }
+}
+
 async function handleImport(e) {
   const file = e.target.files[0]; if (!file) return;
   let p = null, importedColors = null, importedVendors = null;
+  let streamTempCount = 0;
 
   const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
 
@@ -1272,7 +1317,7 @@ async function handleImport(e) {
       if (!p.id || !p.name) throw new Error('Missing project id or name');
       migrateProject(p);
 
-      // Extract photos from ZIP to IDB one at a time (avoids loading all into RAM)
+      // Extract photos from ZIP to IDB one at a time
       for (const ph of (p.photos || [])) {
         if (!ph.id) continue;
         const photoFile = zip.file('media/photos/' + ph.id);
@@ -1301,19 +1346,28 @@ async function handleImport(e) {
       }
 
     } else {
-      // ─── Legacy JSON format ───
+      // ─── JSON format ───
       let parsed;
-      try {
-        parsed = await new Response(file).json();
-      } catch (parseErr) {
-        const text = await new Promise((res, rej) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result);
-          reader.onerror = () => rej(new Error('Could not read file'));
-          reader.readAsText(file);
-        });
-        parsed = JSON.parse(text);
+      const useStreaming = file.size > 50 * 1024 * 1024; // >50 MB
+
+      if (useStreaming) {
+        const result = await _streamingJsonImport(file);
+        parsed = result.parsed;
+        streamTempCount = result.tempCount;
+      } else {
+        try {
+          parsed = await new Response(file).json();
+        } catch (parseErr) {
+          const text = await new Promise((res, rej) => {
+            const reader = new FileReader();
+            reader.onload = () => res(reader.result);
+            reader.onerror = () => rej(new Error('Could not read file'));
+            reader.readAsText(file);
+          });
+          parsed = JSON.parse(text);
+        }
       }
+
       if (parsed._netrack_version === 2 && parsed.project) {
         p = parsed.project;
         importedColors = parsed.typeColors;
@@ -1321,14 +1375,29 @@ async function handleImport(e) {
       } else if (parsed.id && parsed.name) {
         p = parsed;
       } else {
+        if (useStreaming) await _cleanupImportTemp(streamTempCount);
         throw new Error('Unrecognised file format');
       }
-      if (!p.id || !p.name) throw new Error('Missing project id or name');
+      if (!p.id || !p.name) {
+        if (useStreaming) await _cleanupImportTemp(streamTempCount);
+        throw new Error('Missing project id or name');
+      }
       migrateProject(p);
 
-      // Extract inline photo data to IDB
+      // Extract/move photo data to IDB
       for (const ph of (p.photos || [])) {
-        if (ph.data) {
+        if (useStreaming && ph.data && typeof ph.data === 'string' && ph.data.startsWith('_import_temp_')) {
+          // Streaming: move from temp IDB key to actual photo key
+          const actualData = await _idbGetPhotoData(ph.data);
+          if (actualData) {
+            if (!ph.thumb) ph.thumb = await _generateThumb(actualData) || '';
+            if (!ph.dataLen) ph.dataLen = actualData.length;
+            await _idbSavePhotoData(ph.id, actualData);
+          }
+          await _idbDeletePhotoData(ph.data);
+          ph.data = null;
+        } else if (ph.data) {
+          // Normal: save inline data directly
           if (!ph.thumb) ph.thumb = await _generateThumb(ph.data) || '';
           if (!ph.dataLen) ph.dataLen = ph.data.length;
           await _idbSavePhotoData(ph.id, ph.data);
@@ -1336,16 +1405,33 @@ async function handleImport(e) {
         }
         delete ph._editorSrc;
       }
-      if (p.siteMap?.data) {
+
+      // Site map
+      if (useStreaming && p.siteMap?.data?.startsWith?.('_import_temp_')) {
+        const d = await _idbGetPhotoData(p.siteMap.data);
+        if (d) await _idbSavePhotoData('sitemap_' + p.id, d);
+        await _idbDeletePhotoData(p.siteMap.data);
+        p.siteMap.data = null;
+      } else if (p.siteMap?.data) {
         await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
         p.siteMap.data = null;
       }
-      if (p.cableRunMap?.image) {
+
+      // Cable run map
+      if (useStreaming && p.cableRunMap?.image?.startsWith?.('_import_temp_')) {
+        const d = await _idbGetPhotoData(p.cableRunMap.image);
+        if (d) await _idbSavePhotoData('cablemap_' + p.id, d);
+        await _idbDeletePhotoData(p.cableRunMap.image);
+        p.cableRunMap.image = null;
+      } else if (p.cableRunMap?.image) {
         await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
         p.cableRunMap.image = null;
       }
+
+      if (useStreaming) await _cleanupImportTemp(streamTempCount);
     }
   } catch(err) {
+    if (streamTempCount > 0) await _cleanupImportTemp(streamTempCount);
     toast(`Import failed: ${err.message || 'Invalid project file'}`, 'error');
     e.target.value = '';
     return;
