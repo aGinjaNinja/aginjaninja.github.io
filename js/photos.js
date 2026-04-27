@@ -84,6 +84,8 @@ function renderPhotos() {
     <button class="btn btn-ghost btn-sm" onclick="createPhotoFolder()">📁 New Folder</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-upload').click()">📷 Add Photos</button>
     <button class="btn btn-primary btn-sm" onclick="document.getElementById('photo-capture').click()">📸 Take Photo</button>
+    <button class="btn btn-ghost btn-sm" onclick="downloadPhotosAsZip()" title="Download all photos as ZIP with folder structure">⬇ ZIP Download</button>
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-zip-upload').click()" title="Upload photos from ZIP preserving folder structure">⬆ ZIP Upload</button>
   `);
 
   // Generate thumbnails for existing photos that don't have them (background migration)
@@ -99,14 +101,23 @@ function renderPhotos() {
     })();
   }
 
-  // Filter photos for current view
-  const visiblePhotos = _currentPhotoFolderId === 'all'
-    ? p.photos.map((ph, idx) => ({ ph, idx }))
-    : p.photos.map((ph, idx) => ({ ph, idx })).filter(({ ph }) => ph.folderId === _currentPhotoFolderId);
+  // Filter photos for current view (include subfolders when viewing a parent)
+  let visiblePhotos;
+  if (_currentPhotoFolderId === 'all') {
+    visiblePhotos = p.photos.map((ph, idx) => ({ ph, idx }));
+  } else if (_currentPhotoFolderId === '') {
+    visiblePhotos = p.photos.map((ph, idx) => ({ ph, idx })).filter(({ ph }) => !ph.folderId);
+  } else {
+    const matchIds = _getFolderAndDescendantIds(_currentPhotoFolderId);
+    visiblePhotos = p.photos.map((ph, idx) => ({ ph, idx })).filter(({ ph }) => matchIds.has(ph.folderId));
+  }
 
-  // Build folder sidebar
+  // Build folder sidebar with nested tree
   const allCount = p.photos.length;
   const unfiledCount = p.photos.filter(ph => !ph.folderId).length;
+  // Ensure parentId exists on all folders
+  p.photoFolders.forEach(f => { if (f.parentId === undefined) f.parentId = ''; });
+  const folderTree = _buildFolderTree(p.photoFolders, p.photos, '');
   const folderItems = `
     <div class="photo-folder-item ${_currentPhotoFolderId === 'all' ? 'active' : ''}" onclick="setPhotoFolder('all')">
       <span>📷</span><span>All Photos</span><span class="photo-folder-count">${allCount}</span>
@@ -115,18 +126,7 @@ function renderPhotos() {
       <span>📄</span><span>Unfiled</span><span class="photo-folder-count">${unfiledCount}</span>
     </div>
     <div style="border-top:1px solid var(--border);margin:6px 0"></div>
-    ${p.photoFolders.map(f => {
-      const cnt = p.photos.filter(ph => ph.folderId === f.id).length;
-      return `<div class="photo-folder-item ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')">
-        <span>📁</span>
-        <span style="flex:1;min-width:0;word-break:break-word">${esc(f.name)}</span>
-        <span class="photo-folder-count">${cnt}</span>
-        <span class="photo-folder-actions">
-          <button class="photo-folder-btn" title="Rename" onclick="event.stopPropagation();renamePhotoFolder('${f.id}')">✎</button>
-          <button class="photo-folder-btn" title="Delete folder" onclick="event.stopPropagation();deletePhotoFolder('${f.id}')">✕</button>
-        </span>
-      </div>`;
-    }).join('')}
+    ${folderTree}
     <div style="margin-top:8px">
       <button class="btn btn-ghost btn-sm" style="width:100%;font-size:11px" onclick="createPhotoFolder()">+ New Folder</button>
     </div>`;
@@ -207,6 +207,72 @@ function renderPhotos() {
   }
 }
 
+// Get a folder and all its descendant IDs (for filtering photos in a folder tree)
+function _getFolderAndDescendantIds(folderId) {
+  const p = getProject();
+  const ids = new Set([folderId]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const f of (p.photoFolders || [])) {
+      if (f.parentId && ids.has(f.parentId) && !ids.has(f.id)) {
+        ids.add(f.id);
+        added = true;
+      }
+    }
+  }
+  return ids;
+}
+
+// Build folder tree HTML recursively
+function _buildFolderTree(folders, photos, parentId) {
+  const children = folders.filter(f => (f.parentId || '') === parentId);
+  if (children.length === 0) return '';
+  return children.map(f => {
+    const descendantIds = _getFolderAndDescendantIds(f.id);
+    const cnt = photos.filter(ph => descendantIds.has(ph.folderId)).length;
+    const depth = _getFolderDepth(folders, f.id);
+    const indent = depth * 16;
+    const sub = _buildFolderTree(folders, photos, f.id);
+    return `<div class="photo-folder-item ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')" style="padding-left:${8 + indent}px">
+      <span>${sub ? '📂' : '📁'}</span>
+      <span style="flex:1;min-width:0;word-break:break-word">${esc(f.name)}</span>
+      <span class="photo-folder-count">${cnt}</span>
+      <span class="photo-folder-actions">
+        <button class="photo-folder-btn" title="Rename" onclick="event.stopPropagation();renamePhotoFolder('${f.id}')">✎</button>
+        <button class="photo-folder-btn" title="Delete folder" onclick="event.stopPropagation();deletePhotoFolder('${f.id}')">✕</button>
+      </span>
+    </div>${sub}`;
+  }).join('');
+}
+
+function _getFolderDepth(folders, id) {
+  let depth = 0;
+  let current = folders.find(f => f.id === id);
+  while (current?.parentId) {
+    depth++;
+    current = folders.find(f => f.id === current.parentId);
+    if (depth > 10) break; // safety
+  }
+  return depth;
+}
+
+// Build flat <option> list with indentation for folder pickers
+function _buildFolderOptions(folders, selectedId, excludeId) {
+  const opts = [];
+  function walk(parentId, depth) {
+    const children = folders.filter(f => (f.parentId || '') === parentId);
+    for (const f of children) {
+      if (f.id === excludeId) continue;
+      const prefix = '\u00A0\u00A0'.repeat(depth);
+      opts.push(`<option value="${f.id}" ${f.id === selectedId ? 'selected' : ''}>${prefix}${esc(f.name)}</option>`);
+      walk(f.id, depth + 1);
+    }
+  }
+  walk('', 0);
+  return opts.join('');
+}
+
 function setPhotoFolder(folderId) {
   _currentPhotoFolderId = folderId;
   renderPhotos();
@@ -223,10 +289,20 @@ function _getPhotoFolderLocations() {
 }
 
 function createPhotoFolder() {
+  const p = getProject();
   const locations = _getPhotoFolderLocations();
   const locOptions = locations.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+  const defaultParent = (_currentPhotoFolderId && _currentPhotoFolderId !== 'all' && _currentPhotoFolderId !== '') ? _currentPhotoFolderId : '';
+  const parentOpts = _buildFolderOptions(p.photoFolders || [], defaultParent);
   openModal(`
     <h3>📁 New Photo Folder</h3>
+    <div class="form-row">
+      <label>Parent Folder</label>
+      <select class="form-control" id="pf-parent">
+        <option value="">— Root (no parent) —</option>
+        ${parentOpts}
+      </select>
+    </div>
     <div class="form-row">
       <label>Location</label>
       <select class="form-control" id="pf-location">
@@ -262,11 +338,12 @@ function createPhotoFolder() {
 function savePhotoFolder() {
   const location = document.getElementById('pf-location')?.value || '';
   const name = document.getElementById('pf-name')?.value?.trim();
+  const parentId = document.getElementById('pf-parent')?.value || '';
   if (!name) return toast('Enter a folder name', 'error');
   const displayName = location ? location + ' - ' + name : name;
   const p = getProject();
   if (!p.photoFolders) p.photoFolders = [];
-  const folder = { id: genId(), name: displayName, location, folderName: name };
+  const folder = { id: genId(), name: displayName, location, folderName: name, parentId };
   p.photoFolders.push(folder);
   logChange(`Photo folder created: "${displayName}"`);
   save();
@@ -283,9 +360,17 @@ function renamePhotoFolder(id) {
   const locations = _getPhotoFolderLocations();
   const curLoc = folder.location || '';
   const curName = folder.folderName || folder.name || '';
+  const parentOpts = _buildFolderOptions(p.photoFolders || [], folder.parentId || '', id);
   const locOptions = locations.map(l => `<option value="${esc(l)}" ${l === curLoc ? 'selected' : ''}>${esc(l)}</option>`).join('');
   openModal(`
-    <h3>Rename Folder</h3>
+    <h3>Rename / Move Folder</h3>
+    <div class="form-row">
+      <label>Parent Folder</label>
+      <select class="form-control" id="pfr-parent">
+        <option value="" ${!folder.parentId ? 'selected' : ''}>— Root (no parent) —</option>
+        ${parentOpts}
+      </select>
+    </div>
     <div class="form-row">
       <label>Location</label>
       <select class="form-control" id="pfr-location">
@@ -322,6 +407,7 @@ function renamePhotoFolder(id) {
 function saveRenameFolder(id) {
   const location = document.getElementById('pfr-location')?.value || '';
   const name = document.getElementById('pfr-name')?.value?.trim();
+  const parentId = document.getElementById('pfr-parent')?.value || '';
   if (!name) return toast('Enter a folder name', 'error');
   const displayName = location ? location + ' - ' + name : name;
   const p = getProject();
@@ -331,6 +417,7 @@ function saveRenameFolder(id) {
   folder.name = displayName;
   folder.location = location;
   folder.folderName = name;
+  folder.parentId = parentId;
   logChange(`Photo folder renamed: "${old}" → "${displayName}"`);
   save();
   closeModal();
@@ -343,16 +430,21 @@ function deletePhotoFolder(id) {
   const folder = p.photoFolders?.find(f => f.id === id);
   if (!folder) return;
   const photoCount = p.photos.filter(ph => ph.folderId === id).length;
-  const msg = photoCount > 0
-    ? `Delete folder "${folder.name}"? ${photoCount} photo${photoCount>1?'s':''} will be moved to Unfiled.`
-    : `Delete folder "${folder.name}"?`;
+  const childCount = p.photoFolders.filter(f => f.parentId === id).length;
+  const extra = [];
+  if (photoCount > 0) extra.push(`${photoCount} photo${photoCount>1?'s':''} moved to ${folder.parentId ? 'parent folder' : 'Unfiled'}`);
+  if (childCount > 0) extra.push(`${childCount} subfolder${childCount>1?'s':''} moved up`);
+  const msg = `Delete folder "${folder.name}"?` + (extra.length ? ' ' + extra.join(', ') + '.' : '');
   if (!confirm(msg)) return;
-  // Move photos to unfiled
-  p.photos.forEach(ph => { if (ph.folderId === id) ph.folderId = ''; });
+  // Move photos to parent folder (or unfiled if root)
+  const newParent = folder.parentId || '';
+  p.photos.forEach(ph => { if (ph.folderId === id) ph.folderId = newParent; });
+  // Reparent child folders to deleted folder's parent
+  p.photoFolders.forEach(f => { if (f.parentId === id) f.parentId = newParent; });
   p.photoFolders = p.photoFolders.filter(f => f.id !== id);
   logChange(`Photo folder deleted: "${folder.name}"`);
   save();
-  if (_currentPhotoFolderId === id) _currentPhotoFolderId = 'all';
+  if (_currentPhotoFolderId === id) _currentPhotoFolderId = newParent || 'all';
   renderPhotos();
   toast('Folder deleted', 'success');
 }
@@ -364,7 +456,7 @@ function movePhotoToFolder(idx) {
   if (!ph) return;
   const folderOpts = `
     <option value="">— Unfiled —</option>
-    ${p.photoFolders.map(f => `<option value="${f.id}" ${ph.folderId === f.id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}
+    ${_buildFolderOptions(p.photoFolders, ph.folderId)}
   `;
   openModal(`
     <h3>Move Photo to Folder</h3>
@@ -395,45 +487,36 @@ function saveMovePhoto(idx) {
   toast(`Photo moved to ${newFolderObj ? '"' + newFolderObj.name + '"' : 'Unfiled'}`, 'success');
 }
 
-function uploadPhotos(e) {
+async function uploadPhotos(e) {
   const p = getProject();
   if (!p.photos) p.photos = [];
   const files = Array.from(e.target.files);
   if (!files.length) return;
   const input = e.target;
-  let done = 0;
   let added = 0;
-  files.forEach(file => {
-    const reader = new FileReader();
-    reader.onload = async ev => {
-      try {
-        const dataUrl = ev.target.result;
-        const thumb = await _generateThumb(dataUrl);
-        const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
-        const photoId = genId();
-        await _idbSavePhotoData(photoId, dataUrl);
-        p.photos.push({ id: photoId, name: file.name, caption: '', data: null, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, dataLen: dataUrl.length, assignments: [], folderId: folderId || '' });
-        logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
-        added++;
-      } catch(err) { console.error('Photo add error:', err); }
-      done++;
-      if (done === files.length) {
-        if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''}`, 'success'); }
-        else { toast('Could not add photos', 'error'); }
-        try { input.value = ''; } catch(e) {}
-      }
-    };
-    reader.onerror = () => {
-      console.error('FileReader error for', file.name);
-      done++;
-      if (done === files.length) {
-        if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''} (some failed)`, 'warning'); }
-        else { toast('Could not read photos', 'error'); }
-        try { input.value = ''; } catch(e) {}
-      }
-    };
-    reader.readAsDataURL(file);
-  });
+
+  for (const file of files) {
+    try {
+      const blob = await _convertHeicIfNeeded(file, file.name);
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const thumb = await _generateThumb(dataUrl);
+      const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
+      const photoId = genId();
+      await _idbSavePhotoData(photoId, dataUrl);
+      p.photos.push({ id: photoId, name: file.name, caption: '', data: null, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, dataLen: dataUrl.length, assignments: [], folderId: folderId || '' });
+      logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
+      added++;
+    } catch(err) { console.error('Photo add error:', err); }
+  }
+
+  if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''}`, 'success'); }
+  else { toast('Could not add photos', 'error'); }
+  try { input.value = ''; } catch(e) {}
 }
 
 function deletePhoto(idx) {
@@ -1258,15 +1341,21 @@ function togglePhotoLock() {
 }
 
 
-function replacePhoto(e, idx) {
+async function replacePhoto(e, idx) {
   const file = e.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async ev => {
+  e.target.value = '';
+  try {
+    const blob = await _convertHeicIfNeeded(file, file.name);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
     const p = getProject();
     if (!p.photos[idx]) return;
     const oldName = p.photos[idx].caption || p.photos[idx].name || `Photo ${idx+1}`;
-    const dataUrl = ev.target.result;
     await _idbSavePhotoData(p.photos[idx].id, dataUrl);
     p.photos[idx].data = null;
     p.photos[idx].dataLen = dataUrl.length;
@@ -1277,9 +1366,10 @@ function replacePhoto(e, idx) {
     save();
     openPhotoEditor(idx);
     toast('Photo replaced', 'success');
-  };
-  reader.readAsDataURL(file);
-  e.target.value = '';
+  } catch (err) {
+    console.error('Replace photo error:', err);
+    toast('Failed to replace photo: ' + err.message, 'error');
+  }
 }
 
 function rotatePhoto(idx) {
@@ -1317,3 +1407,189 @@ function onPhotoMouseWheel(e) {
 // legacy - keep for any stale refs
 function openPhotoLightbox(idx) { openPhotoEditor(idx); }
 function savePhotoCaption(idx) { savePhotoEditor(idx); }
+
+// ═══════════════════════════════════════════
+//  ZIP DOWNLOAD / UPLOAD
+// ═══════════════════════════════════════════
+
+async function _convertHeicIfNeeded(blob, fileName) {
+  const name = (fileName || blob.name || '').toLowerCase();
+  const isHeic = name.endsWith('.heic') || name.endsWith('.heif') || blob.type === 'image/heic' || blob.type === 'image/heif';
+  if (!isHeic || typeof heic2any === 'undefined') return blob;
+  try {
+    const converted = await heic2any({ blob, toType: 'image/jpeg', quality: 0.92 });
+    return Array.isArray(converted) ? converted[0] : converted;
+  } catch (err) {
+    console.warn('HEIC conversion failed, using original:', err);
+    return blob;
+  }
+}
+
+function _getPhotoFolderPath(folders, folderId) {
+  if (!folderId) return '';
+  const parts = [];
+  let current = folders.find(f => f.id === folderId);
+  let depth = 0;
+  while (current && depth < 20) {
+    parts.unshift(current.name.replace(/[<>:"/\\|?*]/g, '_'));
+    current = current.parentId ? folders.find(f => f.id === current.parentId) : null;
+    depth++;
+  }
+  return parts.join('/');
+}
+
+function _mimeToExt(mime) {
+  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp', 'image/svg+xml': '.svg', 'image/heic': '.heic', 'image/heif': '.heif', 'image/tiff': '.tiff', 'image/avif': '.avif', 'image/x-icon': '.ico' };
+  return map[mime] || '.jpg';
+}
+
+async function downloadPhotosAsZip() {
+  const p = getProject();
+  if (!p.photos || p.photos.length === 0) return toast('No photos to download', 'error');
+  if (typeof JSZip === 'undefined') return toast('ZIP library not loaded — please reload the page', 'error');
+
+  toast('Building ZIP file...', 'info');
+  const zip = new JSZip();
+  const usedPaths = new Set();
+  let count = 0;
+
+  for (const ph of p.photos) {
+    const data = await _idbGetPhotoData(ph.id);
+    if (!data) continue;
+
+    const folderPath = _getPhotoFolderPath(p.photoFolders || [], ph.folderId);
+
+    // Determine filename with correct extension
+    let baseName = (ph.name || ph.caption || ph.id).replace(/[<>:"/\\|?*]/g, '_');
+    const mime = (data.match(/^data:([^;]+);/) || [])[1] || 'image/jpeg';
+    const ext = _mimeToExt(mime);
+    if (!/\.\w+$/.test(baseName)) baseName += ext;
+
+    // Ensure unique path within the ZIP
+    let fullPath = folderPath ? folderPath + '/' + baseName : baseName;
+    let counter = 1;
+    while (usedPaths.has(fullPath.toLowerCase())) {
+      const dotIdx = baseName.lastIndexOf('.');
+      const nameOnly = dotIdx >= 0 ? baseName.slice(0, dotIdx) : baseName;
+      const extPart = dotIdx >= 0 ? baseName.slice(dotIdx) : '';
+      fullPath = (folderPath ? folderPath + '/' : '') + nameOnly + '_' + counter + extPart;
+      counter++;
+    }
+    usedPaths.add(fullPath.toLowerCase());
+
+    const base64 = data.split(',')[1];
+    zip.file(fullPath, base64, { base64: true });
+    count++;
+  }
+
+  if (count === 0) return toast('No photo data found to export', 'error');
+
+  try {
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (p.name || 'photos').replace(/\s+/g, '_') + '_photos.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast(`Downloaded ${count} photo${count > 1 ? 's' : ''} as ZIP`, 'success');
+  } catch (err) {
+    console.error('ZIP generation error:', err);
+    toast('Failed to generate ZIP: ' + err.message, 'error');
+  }
+}
+
+async function uploadPhotosFromZip(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  if (typeof JSZip === 'undefined') return toast('ZIP library not loaded — please reload the page', 'error');
+
+  toast('Reading ZIP file...', 'info');
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const p = getProject();
+    if (!p.photos) p.photos = [];
+    if (!p.photoFolders) p.photoFolders = [];
+
+    let added = 0;
+    const folderCache = new Map(); // "path/to/folder" -> folderId
+
+    // Pre-index existing folders by building their full paths
+    for (const f of p.photoFolders) {
+      const path = _getPhotoFolderPath(p.photoFolders, f.id);
+      folderCache.set(path.toLowerCase(), f.id);
+    }
+
+    const entries = Object.values(zip.files).filter(entry =>
+      !entry.dir && /\.(jpg|jpeg|png|gif|bmp|webp|svg|heic|heif|tiff|tif|avif|ico|raw|cr2|nef|arw|dng)$/i.test(entry.name)
+    );
+
+    for (const entry of entries) {
+      const parts = entry.name.replace(/\\/g, '/').split('/');
+      const fileName = parts.pop();
+      if (!fileName) continue;
+
+      // Create/find folders for this path
+      let parentId = '';
+      let folderPath = '';
+      for (const folderName of parts) {
+        folderPath = folderPath ? folderPath + '/' + folderName : folderName;
+        const key = folderPath.toLowerCase();
+        if (!folderCache.has(key)) {
+          // Check if a folder with this name already exists under this parent
+          let existing = p.photoFolders.find(f => f.name === folderName && (f.parentId || '') === parentId);
+          if (!existing) {
+            existing = { id: genId(), name: folderName, location: '', folderName: folderName, parentId };
+            p.photoFolders.push(existing);
+          }
+          folderCache.set(key, existing.id);
+        }
+        parentId = folderCache.get(key);
+      }
+
+      // Read file as data URL, converting HEIC if needed
+      let blob = await entry.async('blob');
+      blob = await _convertHeicIfNeeded(blob, entry.name);
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const thumb = await _generateThumb(dataUrl);
+      const photoId = genId();
+      await _idbSavePhotoData(photoId, dataUrl);
+
+      p.photos.push({
+        id: photoId,
+        name: fileName,
+        caption: '',
+        data: null,
+        thumb: thumb || '',
+        ts: new Date().toISOString(),
+        date: Date.now(),
+        size: blob.size,
+        dataLen: dataUrl.length,
+        assignments: [],
+        folderId: parentId
+      });
+      added++;
+    }
+
+    if (added > 0) {
+      logChange(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`);
+      save();
+      renderPhotos();
+      toast(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`, 'success');
+    } else {
+      toast('No image files found in ZIP', 'error');
+    }
+  } catch (err) {
+    console.error('ZIP upload error:', err);
+    toast('Failed to read ZIP: ' + err.message, 'error');
+  }
+}
