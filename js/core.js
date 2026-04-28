@@ -1346,27 +1346,12 @@ async function handleImport(e) {
       }
 
     } else {
-      // ─── JSON format ───
+      // ─── JSON format (always use streaming to avoid memory crash) ───
       let parsed;
-      const useStreaming = file.size > 50 * 1024 * 1024; // >50 MB
-
-      if (useStreaming) {
-        const result = await _streamingJsonImport(file);
-        parsed = result.parsed;
-        streamTempCount = result.tempCount;
-      } else {
-        try {
-          parsed = await new Response(file).json();
-        } catch (parseErr) {
-          const text = await new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result);
-            reader.onerror = () => rej(new Error('Could not read file'));
-            reader.readAsText(file);
-          });
-          parsed = JSON.parse(text);
-        }
-      }
+      const useStreaming = true;
+      const result = await _streamingJsonImport(file);
+      parsed = result.parsed;
+      streamTempCount = result.tempCount;
 
       if (parsed._netrack_version === 2 && parsed.project) {
         p = parsed.project;
