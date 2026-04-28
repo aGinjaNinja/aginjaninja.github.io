@@ -596,7 +596,7 @@ async function globalSave() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTimeout(() => URL.revokeObjectURL(url), 300000);
       logChange('Project exported (Save button)');
     }
   }
@@ -1234,7 +1234,7 @@ async function exportData() {
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 300000);
     logChange('Project exported manually');
     toast('Project exported', 'success');
   } catch (err) {
@@ -1274,13 +1274,44 @@ async function _streamingJsonImport(file) {
     parts.push(text.substring(pos));
     text = null; // allow GC to reclaim the large string
 
-    return { parsed: JSON.parse(parts.join('')), tempCount };
+    let reduced = parts.join('');
+    let parsed;
+    try {
+      parsed = JSON.parse(reduced);
+    } catch (parseErr) {
+      // File may be truncated — try to repair by closing unclosed strings/brackets
+      parsed = JSON.parse(_repairTruncatedJson(reduced));
+    }
+    return { parsed, tempCount };
   } catch (err) {
     for (let i = 0; i < tempCount; i++) {
       try { await _idbDeletePhotoData(`_import_temp_${i}`); } catch(e) {}
     }
     throw err;
   }
+}
+
+// Attempt to repair truncated JSON by closing unclosed strings and brackets
+function _repairTruncatedJson(text) {
+  let inStr = false, esc = false;
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) { esc = false; }
+      else if (c === '\\') { esc = true; }
+      else if (c === '"') { inStr = false; }
+    } else {
+      if (c === '"') { inStr = true; }
+      else if (c === '{' || c === '[') { stack.push(c === '{' ? '}' : ']'); }
+      else if (c === '}' || c === ']') { if (stack.length) stack.pop(); }
+    }
+  }
+  if (inStr) text += '"';
+  // If the last token was a key (text ends with "key":), add null
+  if (/:\s*$/.test(text)) text += 'null';
+  while (stack.length) text += stack.pop();
+  return text;
 }
 
 async function _cleanupImportTemp(count) {
