@@ -1,4 +1,4 @@
-const CACHE_NAME = 'netrack-v1';
+const CACHE_NAME = 'netrack-v2';
 
 const ASSETS = [
   '/',
