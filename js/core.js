@@ -1245,41 +1245,22 @@ async function exportData() {
 
 function importData() { document.getElementById('import-input')?.click(); }
 
-// Memory-efficient JSON import: strips large data URIs from the raw text and
-// saves each one to IDB individually, then parses the now-small JSON string.
-// This avoids the 3-4x memory multiplier of JSON.parse on huge files.
+// Memory-efficient JSON import: strips large data URIs and saves each to IDB
+// individually, then parses the lightweight remaining JSON.
+// Uses chunked reading for files > 400MB that exceed V8's string length limit.
 async function _streamingJsonImport(file) {
-  let text = await file.text();
-  const dataPattern = /"(data|image)"\s*:\s*"(data:image\/[^"]*)"/g;
-  const entries = [];
   let tempCount = 0;
-
   try {
-    let m;
-    while ((m = dataPattern.exec(text)) !== null) {
-      const tempKey = `_import_temp_${tempCount}`;
-      await _idbSavePhotoData(tempKey, m[2]);
-      entries.push({ start: m.index, end: m.index + m[0].length, fieldName: m[1], tempKey });
-      tempCount++;
-    }
-
-    // Rebuild text with small placeholders instead of huge data URIs
-    const parts = [];
-    let pos = 0;
-    for (const e of entries) {
-      parts.push(text.substring(pos, e.start));
-      parts.push(`"${e.fieldName}":"${e.tempKey}"`);
-      pos = e.end;
-    }
-    parts.push(text.substring(pos));
-    text = null; // allow GC to reclaim the large string
-
-    let reduced = parts.join('');
+    let metaParts, tc;
+    // Always use chunked approach — handles any file size and whitespace
+    ({ metaParts, tempCount: tc } = await _chunkedJsonStrip(file));
+    tempCount = tc;
+    let reduced = metaParts.join('');
+    metaParts = null;
     let parsed;
     try {
       parsed = JSON.parse(reduced);
     } catch (parseErr) {
-      // File may be truncated — try to repair by closing unclosed strings/brackets
       parsed = JSON.parse(_repairTruncatedJson(reduced));
     }
     return { parsed, tempCount };
@@ -1289,6 +1270,95 @@ async function _streamingJsonImport(file) {
     }
     throw err;
   }
+}
+
+// Regex-based stripping for files that fit in a single JS string (< ~500MB)
+async function _regexJsonStrip(file) {
+  let text = await file.text();
+  const dataPattern = /"(data|image)"\s*:\s*"(data:image\/[^"]*)"/g;
+  const entries = [];
+  let tempCount = 0;
+  let m;
+  while ((m = dataPattern.exec(text)) !== null) {
+    const tempKey = `_import_temp_${tempCount}`;
+    await _idbSavePhotoData(tempKey, m[2]);
+    entries.push({ start: m.index, end: m.index + m[0].length, fieldName: m[1], tempKey });
+    tempCount++;
+  }
+  const metaParts = [];
+  let pos = 0;
+  for (const e of entries) {
+    metaParts.push(text.substring(pos, e.start));
+    metaParts.push(`"${e.fieldName}":"${e.tempKey}"`);
+    pos = e.end;
+  }
+  metaParts.push(text.substring(pos));
+  text = null;
+  return { metaParts, tempCount };
+}
+
+// Chunked stripping for files too large for a single JS string (> ~500MB).
+// Reads 5MB slices, finds data URI boundaries, saves each to IDB on the fly.
+async function _chunkedJsonStrip(file) {
+  const CHUNK = 5 * 1024 * 1024;
+  const metaParts = [];
+  let buffer = '';
+  let inDataUri = false;
+  let dataChunks = [];
+  let fieldName = '';
+  let tempCount = 0;
+  // Patterns tolerate optional whitespace (pretty-printed JSON)
+  const dataRe = /"data"\s*:\s*"data:image\//;
+  const imageRe = /"image"\s*:\s*"data:image\//;
+  const prefixRe = /^"(data|image)"\s*:\s*"/;
+
+  for (let offset = 0; offset < file.size; offset += CHUNK) {
+    const slice = file.slice(offset, Math.min(offset + CHUNK, file.size));
+    buffer += await slice.text();
+
+    for (;;) {
+      if (inDataUri) {
+        const q = buffer.indexOf('"');
+        if (q >= 0) {
+          dataChunks.push(buffer.substring(0, q));
+          const tempKey = `_import_temp_${tempCount}`;
+          await _idbSavePhotoData(tempKey, dataChunks.join(''));
+          metaParts.push(`"${fieldName}":"${tempKey}"`);
+          dataChunks = [];
+          tempCount++;
+          buffer = buffer.substring(q + 1); // skip past the closing "
+          inDataUri = false;
+        } else {
+          dataChunks.push(buffer);
+          buffer = '';
+          break;
+        }
+      } else {
+        const di = buffer.search(dataRe);
+        const ii = buffer.search(imageRe);
+        let matchIdx = -1;
+        if (di >= 0 && (ii < 0 || di < ii)) { matchIdx = di; }
+        else if (ii >= 0) { matchIdx = ii; }
+        if (matchIdx >= 0) {
+          metaParts.push(buffer.substring(0, matchIdx));
+          const pm = buffer.substring(matchIdx).match(prefixRe);
+          fieldName = pm[1]; // "data" or "image"
+          buffer = buffer.substring(matchIdx + pm[0].length);
+          inDataUri = true;
+          dataChunks = [];
+        } else {
+          // Keep tail for cross-chunk boundary detection
+          if (buffer.length > 40) {
+            metaParts.push(buffer.substring(0, buffer.length - 40));
+            buffer = buffer.substring(buffer.length - 40);
+          }
+          break;
+        }
+      }
+    }
+  }
+  if (buffer.length > 0) metaParts.push(buffer);
+  return { metaParts, tempCount };
 }
 
 // Attempt to repair truncated JSON by closing unclosed strings and brackets
