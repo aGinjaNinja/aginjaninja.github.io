@@ -1,4 +1,4 @@
-const CACHE_NAME = 'netrack-v2';
+const CACHE_NAME = 'netrack-v3';
 
 const ASSETS = [
   '/',
@@ -59,29 +59,39 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Fetch: serve from cache first, fall back to network
+// Fetch: network-first for JS/HTML/CSS (always get latest code),
+// cache-first for images and other static assets (fast offline)
 self.addEventListener('fetch', e => {
-  // Skip non-GET and external requests
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
 
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(resp => {
-        // Cache new successful same-origin responses
+  const isCode = url.pathname.endsWith('.js') || url.pathname.endsWith('.html') || url.pathname.endsWith('.css') || e.request.mode === 'navigate';
+
+  if (isCode) {
+    // Network-first: always try fresh copy, fall back to cache offline
+    e.respondWith(
+      fetch(e.request).then(resp => {
         if (resp.ok) {
           const clone = resp.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
         }
         return resp;
-      });
-    }).catch(() => {
-      // Offline fallback for navigation
-      if (e.request.mode === 'navigate') {
-        return caches.match('/index.html');
-      }
-    })
-  );
+      }).catch(() => caches.match(e.request).then(c => c || (e.request.mode === 'navigate' ? caches.match('/index.html') : undefined)))
+    );
+  } else {
+    // Cache-first for images, manifest, etc.
+    e.respondWith(
+      caches.match(e.request).then(cached => {
+        if (cached) return cached;
+        return fetch(e.request).then(resp => {
+          if (resp.ok) {
+            const clone = resp.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
+          }
+          return resp;
+        });
+      }).catch(() => undefined)
+    );
+  }
 });
