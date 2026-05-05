@@ -29,9 +29,12 @@ async function openPhotoViewer(idx) {
   const prevIdx = total > 1 ? indices[(pos - 1 + total) % total] : -1;
   const nextIdx = total > 1 ? indices[(pos + 1) % total] : -1;
 
-  // Remove existing viewer
+  // Remove existing viewer (and its keydown listener)
   let overlay = document.getElementById('photo-viewer-overlay');
-  if (overlay) overlay.remove();
+  if (overlay) {
+    if (overlay._keyHandler) document.removeEventListener('keydown', overlay._keyHandler);
+    overlay.remove();
+  }
 
   overlay = document.createElement('div');
   overlay.id = 'photo-viewer-overlay';
