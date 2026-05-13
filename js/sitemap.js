@@ -66,17 +66,25 @@ function deleteLocation(id) {
 // ═══════════════════════════════════════════
 //  FEATURE 13: SITE MAP
 // ═══════════════════════════════════════════
-let _smPan={x:0,y:0},_smZoom=1,_smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0};
-let _smOverlay='markers'; // 'markers' | 'cableruns'
+let _smPan={x:0,y:0},_smZoom=1;
+let _smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0},_smDragMoved=false;
+let _smOverlay='markers';
 let _smEditMode=false;
 let _smDrawing=false;
-let _smCurrentLine=null; // {points:[{x,y}...], color, label}
+let _smCurrentLine=null;
+let _smMarkerDrag=null;
+let _smTouchPan=null,_smPinch=null;
+
+function _smApplyTransform() {
+  const pan=document.getElementById('sm-pan');
+  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
+}
 
 async function renderSiteMap() {
   const p = getProject();
   if (!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
   if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
-  // Load map image from separate store if needed
+  if (!p.siteMap.markers) p.siteMap.markers=[];
   if (!p.siteMap.data) {
     const smData = await _lazyGetPhotoData('sitemap_' + p.id);
     if (smData) p.siteMap.data = smData;
@@ -111,8 +119,8 @@ async function renderSiteMap() {
     return;
   }
 
-  const markers = p.siteMap.markers||[];
-  const cableLines = p.siteMap.cableLines||[];
+  const markers = p.siteMap.markers;
+  const cableLines = p.siteMap.cableLines;
   const isMarkers = _smOverlay==='markers';
   const canEdit = _smEditMode;
 
@@ -128,14 +136,54 @@ async function renderSiteMap() {
     </g>`;
   }).join('');
 
-  // Build in-progress drawing line
   const drawingLine = (_smDrawing && _smCurrentLine && _smCurrentLine.points.length > 0) ? (() => {
     const pts = _smCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
     return `<path d="${pts}" stroke="${_smCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
   })() : '';
 
-  // Cursor based on mode
-  const cursor = !canEdit ? 'grab' : isMarkers ? 'crosshair' : (_smDrawing ? 'crosshair' : 'crosshair');
+  const cursor = !canEdit ? 'grab' : 'crosshair';
+
+  // Build marker HTML — IDF markers get cabinet icon, others get pin
+  const markersHtml = markers.map(m => {
+    const sz = m.size || 1;
+    const dragAttr = canEdit ? `onmousedown="event.stopPropagation();smMarkerDragStart(event,'${m.id}')" ontouchstart="event.stopPropagation();smMarkerDragStart(event,'${m.id}')"` : '';
+    if (m.type === 'idf') {
+      return `<div class="sitemap-idf" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-50%) scale(${sz})"
+        data-marker-id="${m.id}" ${dragAttr}
+        onclick="event.stopPropagation();smMarkerClick('${m.id}')">
+        <div class="sitemap-idf-box" style="border-color:${m.color||'#00c8ff'}">🗄</div>
+        <div class="sitemap-idf-name" style="color:${m.color||'#00c8ff'}">${esc(m.label)}</div>
+      </div>`;
+    }
+    return `<div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-100%) scale(${sz});transform-origin:bottom center"
+      data-marker-id="${m.id}" ${dragAttr}
+      title="${esc(m.label)}" onclick="event.stopPropagation();smMarkerClick('${m.id}')">
+      <div class="sitemap-label">${esc(m.label)}</div>
+      <div class="sitemap-pin" style="background:${m.color||'#00c8ff'}"></div>
+    </div>`;
+  }).join('');
+
+  // Build IDF closets sidebar section (racks that can be dragged onto the map)
+  const placedRackIds = new Set(markers.filter(m => m.rackId).map(m => m.rackId));
+  const racks = p.racks || [];
+  const idfSidebar = isMarkers && racks.length > 0 ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">IDF Closets (${racks.length})</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:6px">${canEdit ? 'Drag onto map to place' : 'Enable Edit Mode to place'}</div>
+      ${racks.map(r => {
+        const placed = placedRackIds.has(r.id);
+        return `<div class="sm-idf-sidebar-item ${placed ? 'placed' : ''}"
+          ${canEdit && !placed ? `onmousedown="smStartIdfDrag(event,'${r.id}')" ontouchstart="smStartIdfDrag(event,'${r.id}')"` : ''}
+          style="cursor:${canEdit && !placed ? 'grab' : 'default'}">
+          <span style="font-size:14px">🗄</span>
+          <span style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
+          ${placed ? '<span style="font-size:10px;color:var(--accent)">✓</span>' : ''}
+          ${r.location ? `<span style="font-size:9px;color:var(--text3)">${esc(r.location)}</span>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="border-top:1px solid var(--border);margin-bottom:8px"></div>
+  ` : '';
 
   document.getElementById('view-area').innerHTML = `
     <div style="display:flex;gap:14px;height:calc(100vh - 130px)">
@@ -146,7 +194,8 @@ async function renderSiteMap() {
           style="width:100%;height:calc(100vh - 150px);cursor:${cursor};user-select:none"
           onmousedown="smMouseDown(event)" onmousemove="smMouseMove(event)" onmouseup="smMouseUp(event)"
           onclick="smCanvasClick(event)"
-          ondblclick="smDblClick(event)" onwheel="smWheel(event)">
+          ondblclick="smDblClick(event)" onwheel="smWheel(event)"
+          ontouchstart="smTouchStart(event)" ontouchmove="smTouchMove(event)" ontouchend="smTouchEnd(event)">
           <div id="sm-pan" style="position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})">
             <img id="sm-img" src="${p.siteMap.data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
             <svg id="sm-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;pointer-events:none"
@@ -155,14 +204,7 @@ async function renderSiteMap() {
               ${drawingLine}
             </svg>
             <div id="sm-markers" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
-              ${markers.map(m=>{
-                const sz = m.size||1;
-                return `<div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-100%) scale(${sz});transform-origin:bottom center"
-                  title="${esc(m.label)}" onclick="event.stopPropagation();smMarkerClick('${m.id}')">
-                  <div class="sitemap-label">${esc(m.label)}</div>
-                  <div class="sitemap-pin" style="background:${m.color||'#00c8ff'}"></div>
-                </div>`;
-              }).join('')}
+              ${markersHtml}
             </div>
           </div>
         </div>
@@ -173,6 +215,7 @@ async function renderSiteMap() {
         </div>
       </div>
       <div style="width:210px;flex-shrink:0;overflow-y:auto">
+        ${idfSidebar}
         ${isMarkers ? `
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Markers (${markers.length})</div>
@@ -180,7 +223,10 @@ async function renderSiteMap() {
           </div>
           ${markers.map(m=>`
             <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smMarkerClick('${m.id}')">
-              <span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0;transform:scale(${m.size||1})"></span>
+              ${m.type==='idf'
+                ? `<span style="font-size:14px">🗄</span>`
+                : `<span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0;transform:scale(${m.size||1})"></span>`
+              }
               <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
               ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteSmMarker('${m.id}')" style="font-size:10px;padding:2px 5px">✕</button>`:''}
             </div>`).join('')}
@@ -212,7 +258,7 @@ function uploadSiteMap(e) {
     if (!p.siteMap) p.siteMap={data:null,markers:[]};
     const dataUrl = ev.target.result;
     await _idbSavePhotoData('sitemap_' + p.id, dataUrl);
-    p.siteMap.data = dataUrl; // keep in memory for immediate rendering
+    p.siteMap.data = dataUrl;
     _smPan={x:0,y:0}; _smZoom=1;
     logChange('Site map floor plan uploaded');
     save(); renderSiteMap(); toast('Floor plan uploaded','success');
@@ -229,55 +275,149 @@ function clearSiteMap() {
   save(); renderSiteMap();
 }
 
+// ── Pan & Zoom (mouse) ──
+
 function smMouseDown(e) {
   if (e.button!==0) return;
   _smDragging=true;
+  _smDragMoved=false;
   _smDragStart={x:e.clientX,y:e.clientY};
   _smPanStart={..._smPan};
   document.getElementById('sm-canvas').style.cursor='grabbing';
 }
+
 function smMouseMove(e) {
   if(!_smDragging) return;
-  _smPan.x=_smPanStart.x+(e.clientX-_smDragStart.x);
-  _smPan.y=_smPanStart.y+(e.clientY-_smDragStart.y);
-  const pan=document.getElementById('sm-pan');
-  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
+  const dx=e.clientX-_smDragStart.x, dy=e.clientY-_smDragStart.y;
+  if(Math.abs(dx)>3||Math.abs(dy)>3) _smDragMoved=true;
+  _smPan.x=_smPanStart.x+dx;
+  _smPan.y=_smPanStart.y+dy;
+  _smApplyTransform();
 }
+
 function smMouseUp(e) {
   _smDragging=false;
   const c=document.getElementById('sm-canvas');
   if(c) c.style.cursor=_smEditMode?'crosshair':'grab';
 }
+
 function smWheel(e) {
   e.preventDefault();
-  const delta = e.deltaY<0?1.1:0.9;
-  _smZoom=Math.max(0.2,Math.min(5,_smZoom*delta));
-  const pan=document.getElementById('sm-pan');
-  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
+  const canvas=document.getElementById('sm-canvas');
+  if(!canvas) return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const delta=e.deltaY<0?1.1:0.9;
+  const newZoom=Math.max(0.2,Math.min(5,_smZoom*delta));
+  // Zoom toward mouse position
+  _smPan.x=mx-(mx-_smPan.x)*(newZoom/_smZoom);
+  _smPan.y=my-(my-_smPan.y)*(newZoom/_smZoom);
+  _smZoom=newZoom;
+  _smApplyTransform();
 }
-function smZoomIn(){_smZoom=Math.min(5,_smZoom*1.2);const pan=document.getElementById('sm-pan');if(pan)pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;}
-function smZoomOut(){_smZoom=Math.max(0.2,_smZoom/1.2);const pan=document.getElementById('sm-pan');if(pan)pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;}
-function smResetView(){_smPan={x:0,y:0};_smZoom=1;const pan=document.getElementById('sm-pan');if(pan)pan.style.transform='translate(0px,0px) scale(1)';}
+
+function smZoomIn() {
+  const canvas=document.getElementById('sm-canvas');
+  if(!canvas) return;
+  const cx=canvas.offsetWidth/2, cy=canvas.offsetHeight/2;
+  const newZoom=Math.min(5,_smZoom*1.2);
+  _smPan.x=cx-(cx-_smPan.x)*(newZoom/_smZoom);
+  _smPan.y=cy-(cy-_smPan.y)*(newZoom/_smZoom);
+  _smZoom=newZoom;
+  _smApplyTransform();
+}
+
+function smZoomOut() {
+  const canvas=document.getElementById('sm-canvas');
+  if(!canvas) return;
+  const cx=canvas.offsetWidth/2, cy=canvas.offsetHeight/2;
+  const newZoom=Math.max(0.2,_smZoom/1.2);
+  _smPan.x=cx-(cx-_smPan.x)*(newZoom/_smZoom);
+  _smPan.y=cy-(cy-_smPan.y)*(newZoom/_smZoom);
+  _smZoom=newZoom;
+  _smApplyTransform();
+}
+
+function smResetView() {
+  _smPan={x:0,y:0};_smZoom=1;_smApplyTransform();
+}
+
+// ── Pan & Zoom (touch) ──
+
+function smTouchStart(e) {
+  if (e.touches.length===1) {
+    const t=e.touches[0];
+    // Don't start pan if touching a marker (let marker drag handle it)
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    if(el?.closest?.('[data-marker-id]')) return;
+    e.preventDefault();
+    _smTouchPan={startX:t.clientX,startY:t.clientY,origX:_smPan.x,origY:_smPan.y,moved:false,startTime:Date.now()};
+    _smPinch=null;
+  } else if (e.touches.length===2) {
+    e.preventDefault();
+    _smTouchPan=null;
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const canvas=document.getElementById('sm-canvas');
+    const rect=canvas?canvas.getBoundingClientRect():{left:0,top:0};
+    const midX=(e.touches[0].clientX+e.touches[1].clientX)/2-rect.left;
+    const midY=(e.touches[0].clientY+e.touches[1].clientY)/2-rect.top;
+    _smPinch={startDist:Math.hypot(dx,dy),startZoom:_smZoom,startPanX:_smPan.x,startPanY:_smPan.y,midX,midY};
+  }
+}
+
+function smTouchMove(e) {
+  e.preventDefault();
+  if(e.touches.length===1&&_smTouchPan) {
+    const t=e.touches[0];
+    const dx=t.clientX-_smTouchPan.startX, dy=t.clientY-_smTouchPan.startY;
+    if(Math.abs(dx)>5||Math.abs(dy)>5) _smTouchPan.moved=true;
+    if(!_smTouchPan.moved) return;
+    _smPan.x=_smTouchPan.origX+dx;
+    _smPan.y=_smTouchPan.origY+dy;
+    _smApplyTransform();
+  } else if(e.touches.length===2&&_smPinch) {
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const newZoom=Math.max(0.2,Math.min(5,_smPinch.startZoom*Math.hypot(dx,dy)/_smPinch.startDist));
+    _smPan.x=_smPinch.midX-(_smPinch.midX-_smPinch.startPanX)*(newZoom/_smPinch.startZoom);
+    _smPan.y=_smPinch.midY-(_smPinch.midY-_smPinch.startPanY)*(newZoom/_smPinch.startZoom);
+    _smZoom=newZoom;
+    _smApplyTransform();
+  }
+}
+
+function smTouchEnd(e) {
+  // Single tap without drag → treat as click for edit mode
+  if(_smTouchPan&&!_smTouchPan.moved&&e.changedTouches.length===1) {
+    const t=e.changedTouches[0];
+    if(_smEditMode&&Date.now()-_smTouchPan.startTime<400) {
+      smCanvasClick({clientX:t.clientX,clientY:t.clientY,stopPropagation:()=>{}});
+    }
+  }
+  if(e.touches.length<2) _smPinch=null;
+  if(e.touches.length===0) _smTouchPan=null;
+}
+
+// ── Edit-mode interactions ──
 
 function smDblClick(e) {
+  if(_smDragMoved) return;
   const p=getProject();
   if(!p.siteMap?.data) return;
-  if(!_smEditMode) return; // view-only mode blocks edits
+  if(!_smEditMode) return;
   if(_smOverlay==='cableruns') {
-    // Double-click finishes current cable line
     if(_smDrawing && _smCurrentLine) {
       const pt = smEventToImgPct(e);
       if(pt) _smCurrentLine.points.push(pt);
       smFinishCableLine();
     } else {
-      // Start a new cable line
       smStartCableLine();
       const pt = smEventToImgPct(e);
       if(pt) _smCurrentLine.points.push(pt);
     }
     return;
   }
-  // Markers overlay: place a marker
   const img=document.getElementById('sm-img');
   if(!img) return;
   const rect=img.getBoundingClientRect();
@@ -294,14 +434,13 @@ function smSetOverlay(val) { _smOverlay=val; _smDrawing=false; _smCurrentLine=nu
 function smToggleEdit() { _smEditMode=!_smEditMode; if(!_smEditMode){_smDrawing=false;_smCurrentLine=null;} renderSiteMap(); }
 
 function smCanvasClick(e) {
-  if (!_smEditMode) return;
-  if (_smOverlay!=='cableruns') return;
-  if (!_smDrawing || !_smCurrentLine) return;
-  // Add a point to the current line
+  if(_smDragMoved) return;
+  if(!_smEditMode) return;
+  if(_smOverlay!=='cableruns') return;
+  if(!_smDrawing||!_smCurrentLine) return;
   const pt = smEventToImgPct(e);
-  if (!pt) return;
+  if(!pt) return;
   _smCurrentLine.points.push(pt);
-  // Re-render SVG only (lightweight)
   smRedrawLines();
 }
 
@@ -315,7 +454,6 @@ function smEventToImgPct(e) {
 }
 
 function smRedrawLines() {
-  // Lightweight re-render of just the SVG layer
   const p = getProject();
   const cableLines = p.siteMap?.cableLines||[];
   const svgLines = cableLines.map(line => {
@@ -335,6 +473,8 @@ function smRedrawLines() {
   const svg = document.getElementById('sm-svg');
   if (svg) svg.innerHTML = svgLines + drawingLine;
 }
+
+// ── Cable Lines ──
 
 function smStartCableLine() {
   _smDrawing = true;
@@ -356,7 +496,6 @@ function smFinishCableLine() {
   const line = { ..._smCurrentLine };
   _smDrawing = false;
   _smCurrentLine = null;
-  // Ask for label and color
   openModal(`
     <h3>Save Cable Run</h3>
     <div class="form-row"><label>Label</label>
@@ -371,11 +510,10 @@ function smFinishCableLine() {
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal();renderSiteMap()">Discard</button>
-      <button class="btn btn-primary" onclick="smSaveCableLine(${JSON.stringify(line).split('"').join('&quot;')})">Save Run</button>
+      <button class="btn btn-primary" onclick="smSaveCableLine()">Save Run</button>
     </div>
   `);
   setTimeout(()=>document.getElementById('scl-label')?.focus(),50);
-  // Store pending line in a temp variable to avoid JSON escaping issues
   window._smPendingLine = line;
 }
 
@@ -438,6 +576,8 @@ function smDeleteCableLine(id) {
   save(); closeModal(); renderSiteMap();
 }
 
+// ── Markers ──
+
 function openSmMarkerModal(id,xPct,yPct) {
   const p=getProject();
   const m=id?(p.siteMap?.markers||[]).find(x=>x.id===id):null;
@@ -454,6 +594,7 @@ function openSmMarkerModal(id,xPct,yPct) {
           <option value="room" ${(m?.type||'room')==='room'?'selected':''}>Room</option>
           <option value="rack" ${m?.type==='rack'?'selected':''}>Rack</option>
           <option value="device" ${m?.type==='device'?'selected':''}>Device</option>
+          <option value="idf" ${m?.type==='idf'?'selected':''}>IDF Closet</option>
         </select></div>
       <div class="form-row"><label>Color</label>
         <input type="color" class="form-control" id="sm-color" value="${m?.color||'#00c8ff'}" style="height:38px;padding:4px"></div>
@@ -503,21 +644,199 @@ function deleteSmMarker(id) {
   const p=getProject();
   p.siteMap.markers=(p.siteMap.markers||[]).filter(x=>x.id!==id);
   logChange('Site map marker deleted');
-  save(); renderSiteMap();
+  save(); closeModal(); renderSiteMap();
 }
 
+// ── Marker drag (reposition on canvas in edit mode) ──
+
+function smMarkerDragStart(e, markerId) {
+  if (!_smEditMode) return;
+  e.preventDefault();
+  const isTouch = e.type==='touchstart';
+  const startX = isTouch ? e.touches[0].clientX : e.clientX;
+  const startY = isTouch ? e.touches[0].clientY : e.clientY;
+  _smMarkerDrag = { markerId, startX, startY, moved: false };
+
+  const getXY = ev => isTouch
+    ? { x:(ev.touches[0]||ev.changedTouches[0]).clientX, y:(ev.touches[0]||ev.changedTouches[0]).clientY }
+    : { x:ev.clientX, y:ev.clientY };
+
+  const onMove = ev => {
+    if (isTouch) ev.preventDefault();
+    const { x, y } = getXY(ev);
+    if (Math.abs(x-_smMarkerDrag.startX)>3 || Math.abs(y-_smMarkerDrag.startY)>3) _smMarkerDrag.moved=true;
+    if (!_smMarkerDrag.moved) return;
+    const img = document.getElementById('sm-img');
+    if (!img) return;
+    const rect = img.getBoundingClientRect();
+    const xPct = (x-rect.left)/rect.width*100;
+    const yPct = (y-rect.top)/rect.height*100;
+    const el = document.querySelector(`[data-marker-id="${markerId}"]`);
+    if (el) { el.style.left=xPct+'%'; el.style.top=yPct+'%'; }
+  };
+
+  const onUp = ev => {
+    document.removeEventListener(isTouch?'touchmove':'mousemove', onMove);
+    document.removeEventListener(isTouch?'touchend':'mouseup', onUp);
+    if (!_smMarkerDrag?.moved) { _smMarkerDrag=null; return; }
+    const { x, y } = getXY(ev);
+    const img = document.getElementById('sm-img');
+    if (img) {
+      const rect = img.getBoundingClientRect();
+      const xPct = Math.max(0,Math.min(100,(x-rect.left)/rect.width*100));
+      const yPct = Math.max(0,Math.min(100,(y-rect.top)/rect.height*100));
+      const p = getProject();
+      const m = (p.siteMap?.markers||[]).find(mk=>mk.id===markerId);
+      if (m) {
+        m.x=parseFloat(xPct.toFixed(2));
+        m.y=parseFloat(yPct.toFixed(2));
+        logChange(`Site map marker moved: ${m.label}`);
+        save();
+      }
+    }
+    _smMarkerDrag=null;
+    renderSiteMap();
+  };
+
+  document.addEventListener(isTouch?'touchmove':'mousemove', onMove, {passive:false});
+  document.addEventListener(isTouch?'touchend':'mouseup', onUp, {passive:false});
+}
+
+// ── IDF sidebar drag (drag rack from sidebar onto map) ──
+
+function smStartIdfDrag(e, rackId) {
+  e.preventDefault();
+  const p = getProject();
+  const rack = p.racks.find(r=>r.id===rackId);
+  if (!rack) return;
+
+  const isTouch = e.type==='touchstart';
+  const startX = isTouch ? e.touches[0].clientX : e.clientX;
+  const startY = isTouch ? e.touches[0].clientY : e.clientY;
+
+  const ghost = document.createElement('div');
+  ghost.className = 'sitemap-idf';
+  ghost.style.cssText = `position:fixed;z-index:9998;pointer-events:none;transform:translate(-50%,-50%);left:${startX}px;top:${startY}px;opacity:0.85`;
+  ghost.innerHTML = `<div class="sitemap-idf-box" style="border-color:#00c8ff">🗄</div><div class="sitemap-idf-name" style="color:#00c8ff">${esc(rack.name)}</div>`;
+  document.body.appendChild(ghost);
+
+  const getXY = ev => isTouch
+    ? { x:(ev.touches[0]||ev.changedTouches[0]).clientX, y:(ev.touches[0]||ev.changedTouches[0]).clientY }
+    : { x:ev.clientX, y:ev.clientY };
+
+  const onMove = ev => {
+    if (isTouch) ev.preventDefault();
+    const { x, y } = getXY(ev);
+    ghost.style.left=x+'px'; ghost.style.top=y+'px';
+    const canvas=document.getElementById('sm-canvas');
+    if(canvas){
+      const cr=canvas.getBoundingClientRect();
+      canvas.style.outline=(x>=cr.left&&x<=cr.right&&y>=cr.top&&y<=cr.bottom)?'2px solid var(--accent)':'';
+    }
+  };
+
+  const onUp = ev => {
+    document.removeEventListener(isTouch?'touchmove':'mousemove', onMove);
+    document.removeEventListener(isTouch?'touchend':'mouseup', onUp);
+    ghost.remove();
+    const canvas=document.getElementById('sm-canvas');
+    if(canvas) canvas.style.outline='';
+
+    const { x, y } = getXY(ev);
+    const canvasRect=canvas?.getBoundingClientRect();
+    if(!canvasRect||x<canvasRect.left||x>canvasRect.right||y<canvasRect.top||y>canvasRect.bottom) return;
+
+    const img=document.getElementById('sm-img');
+    if(!img) return;
+    const imgRect=img.getBoundingClientRect();
+    const xPct=Math.max(0,Math.min(100,((x-imgRect.left)/imgRect.width*100)));
+    const yPct=Math.max(0,Math.min(100,((y-imgRect.top)/imgRect.height*100)));
+
+    const pNow=getProject();
+    if(!pNow.siteMap) pNow.siteMap={data:null,markers:[],cableLines:[]};
+    if(!pNow.siteMap.markers) pNow.siteMap.markers=[];
+
+    // If a marker for this rack already exists, move it
+    const existing=pNow.siteMap.markers.find(m=>m.rackId===rackId);
+    if(existing){
+      existing.x=parseFloat(xPct.toFixed(2));
+      existing.y=parseFloat(yPct.toFixed(2));
+      logChange(`IDF marker moved: ${rack.name}`);
+    } else {
+      pNow.siteMap.markers.push({
+        id:genId(),
+        x:parseFloat(xPct.toFixed(2)),
+        y:parseFloat(yPct.toFixed(2)),
+        label:rack.name,
+        type:'idf',
+        color:'#00c8ff',
+        size:1,
+        rackId:rackId
+      });
+      logChange(`IDF marker placed: ${rack.name}`);
+    }
+    save(); renderSiteMap();
+    toast(`IDF placed: ${rack.name}`,'success');
+  };
+
+  document.addEventListener(isTouch?'touchmove':'mousemove', onMove, {passive:false});
+  document.addEventListener(isTouch?'touchend':'mouseup', onUp, {passive:false});
+}
+
+// ── Marker click ──
+
 function smMarkerClick(id) {
+  if(_smMarkerDrag?.moved) { _smMarkerDrag=null; return; }
   const p=getProject();
   const m=(p.siteMap?.markers||[]).find(x=>x.id===id);
   if(!m) return;
   const rack=m.rackId?p.racks.find(r=>r.id===m.rackId):null;
-  openModal(`
-    <h3 style="margin-bottom:8px">${esc(m.label)}</h3>
-    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''} · Size: ${Math.round((m.size||1)*100)}%</div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-      ${rack?`<button class="btn btn-ghost" onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">View Rack →</button>`:''}
-      ${_smEditMode?`<button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>`:''}
-    </div>`);
-}
 
+  if(m.type==='idf') {
+    const rackLocation=rack?.location||'';
+    // Find racks at this location
+    const locationRacks=rackLocation
+      ? (p.racks||[]).filter(r=>r.location===rackLocation)
+      : rack ? [rack] : [];
+    // Find matching photo folder
+    const matchingFolder=(p.photoFolders||[]).find(f=>{
+      if(!rackLocation) return f.name===m.label||f.name.includes(m.label);
+      return f.location===rackLocation||f.name===rackLocation||f.name.includes(rackLocation);
+    });
+
+    openModal(`
+      <h3 style="margin-bottom:4px">🗄 ${esc(m.label)}</h3>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">
+        IDF Closet${rack?' · Rack: '+esc(rack.name):''}${rackLocation?' · '+esc(rackLocation):''}
+      </div>
+      ${locationRacks.length>0?`
+        <div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px">Racks (${locationRacks.length})</div>
+        <div style="max-height:150px;overflow-y:auto;margin-bottom:10px">
+          ${locationRacks.map(r=>`
+            <div style="padding:6px 10px;background:var(--card2);border:1px solid var(--border);border-radius:5px;margin-bottom:4px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px"
+              onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${r.id}');setView('racks')">
+              <span style="color:var(--accent)">▸</span>
+              <span style="flex:1">${esc(r.name)}</span>
+              <span style="font-size:10px;color:var(--text3)">${r.uHeight||42}U</span>
+            </div>
+          `).join('')}
+        </div>
+      `:''}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        ${matchingFolder?`<button class="btn btn-ghost" onclick="closeModal();_currentPhotoFolderId='${matchingFolder.id}';setView('photos')">📷 Photos</button>`:''}
+        ${rack?`<button class="btn btn-primary" onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">View Rack →</button>`:''}
+        ${_smEditMode?`<button class="btn btn-ghost" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">✎ Edit</button>`:''}
+      </div>
+    `);
+  } else {
+    openModal(`
+      <h3 style="margin-bottom:8px">${esc(m.label)}</h3>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''} · Size: ${Math.round((m.size||1)*100)}%</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        ${rack?`<button class="btn btn-ghost" onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">View Rack →</button>`:''}
+        ${_smEditMode?`<button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>`:''}
+      </div>`);
+  }
+}
