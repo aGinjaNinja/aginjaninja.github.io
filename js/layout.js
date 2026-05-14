@@ -18,9 +18,82 @@ const VIEW_PAGES = {
   fieldmode: 'fieldmode.html', sitemap: 'sitemap.html'
 };
 
-// Multi-page navigation — replaces the SPA setView()
+// SPA detection — true when running from app.html
+const _isSPA = /app\.html/i.test(window.location.pathname) || window.location.pathname.endsWith('/app');
+
+// SPA navigation — instant view switching without page reloads
 function setView(v) {
-  if (VIEW_PAGES[v]) window.location.href = VIEW_PAGES[v];
+  if (!VIEW_TITLES[v]) return;
+  if (_isSPA) {
+    _spaRenderView(v);
+  } else {
+    if (VIEW_PAGES[v]) window.location.href = VIEW_PAGES[v];
+  }
+}
+
+function _spaRenderView(v) {
+  // Close any open modals/overlays
+  closeModal();
+  if (typeof closePhotoViewer === 'function') closePhotoViewer();
+  closeSidebarDropdowns();
+
+  state.currentView = v;
+  // Update hash (replace for sidebar clicks, push for first nav)
+  const currentHash = window.location.hash.replace('#', '');
+  if (currentHash !== v) {
+    history.pushState({ view: v }, '', '#' + v);
+  }
+
+  // Update topbar title
+  const title = document.getElementById('view-title');
+  if (title) title.textContent = VIEW_TITLES[v] || v;
+
+  // Update sidebar active state (fast — no full rebuild)
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.view === v);
+  });
+
+  // Reset view zoom
+  _viewZoom = 1;
+  const va = document.getElementById('view-area');
+  if (va) {
+    va.style.zoom = 1;
+    // Fade transition
+    va.classList.remove('view-enter');
+    void va.offsetWidth; // force reflow
+    va.classList.add('view-enter');
+  }
+
+  // Update checklist badge
+  updateChecklistNavBadge();
+
+  // Render the view
+  const renderers = {
+    dashboard: () => renderDashboard(),
+    devices: () => { renderDevices(); _checkEditDevice(); },
+    scan: () => renderScan(),
+    racks: () => { renderRacks(); if (typeof checkFocusRack === 'function') checkFocusRack(); },
+    ports: () => renderPorts(),
+    flowchart: () => renderFlowchart(),
+    photos: () => renderPhotos(),
+    settings: () => renderSettings(),
+    log: () => renderLog(),
+    checklist: () => renderChecklist(),
+    cableruns: () => renderCableRuns(),
+    fieldmode: () => renderFieldMode(),
+    sitemap: () => renderSiteMap()
+  };
+
+  if (renderers[v]) renderers[v]();
+}
+
+// Handle "edit device on load" from sessionStorage (used by dashboard → device clicks)
+function _checkEditDevice() {
+  const editId = sessionStorage.getItem('netrack_edit_device');
+  if (editId) {
+    sessionStorage.removeItem('netrack_edit_device');
+    setTimeout(() => { if (typeof editDevice === 'function') editDevice(editId); }, 100);
+  }
 }
 
 function backToProjects() {
@@ -30,77 +103,94 @@ function backToProjects() {
   window.location.href = 'index.html';
 }
 
+// ── Collapsible sidebar sections ──
+const _defaultCollapsed = {};
+function _getCollapsedSections() {
+  try { return JSON.parse(sessionStorage.getItem('netrack_nav_collapsed') || '{}'); } catch(e) { return {}; }
+}
+function _saveCollapsedSections(map) {
+  sessionStorage.setItem('netrack_nav_collapsed', JSON.stringify(map));
+}
+function toggleNavSection(sectionKey) {
+  const map = _getCollapsedSections();
+  map[sectionKey] = !map[sectionKey];
+  _saveCollapsedSections(map);
+  const items = document.querySelector(`.nav-section-items[data-section="${sectionKey}"]`);
+  const arrow = document.querySelector(`.nav-section-hdr[data-section="${sectionKey}"] .nav-section-arrow`);
+  if (items) items.classList.toggle('collapsed', !!map[sectionKey]);
+  if (arrow) arrow.textContent = map[sectionKey] ? '▸' : '▾';
+}
+
 function buildSidebar(activeView) {
   const p = getProject();
   const projName = p ? p.name : '';
+  const col = _getCollapsedSections();
+
+  function section(key, label, items) {
+    const isCollapsed = !!col[key];
+    return `
+      <div class="nav-section nav-section-hdr" data-section="${key}" onclick="toggleNavSection('${key}')">
+        <span class="nav-section-arrow">${isCollapsed ? '▸' : '▾'}</span>${label}
+      </div>
+      <div class="nav-section-items${isCollapsed ? ' collapsed' : ''}" data-section="${key}">
+        ${items}
+      </div>`;
+  }
+
+  function navItem(view, icon, label, extra) {
+    return `<div class="nav-item ${activeView===view?'active':''}" onclick="setView('${view}')" data-view="${view}">
+      <span class="nav-icon">${icon}</span> ${extra ? `<span id="${extra.id}">${extra.html || label}</span>` : label}
+    </div>`;
+  }
+
   return `
     <div class="sidebar-top">
       <div class="sidebar-logo" style="display:flex;align-items:center;gap:8px;padding:4px 0">
         <img src="" id="sidebar-logo-img" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0" alt="VNG">
         <span style="line-height:1.2;flex:1">Van Nice Guys<span style="display:block;font-size:9px;color:var(--accent);letter-spacing:1px;text-transform:uppercase">LLC</span></span>
         <div style="position:relative;flex-shrink:0">
-          <button id="global-save-btn" onclick="toggleSidebarDropdown('save-dropdown')" title="Save project" style="background:rgba(0,200,100,.15);border:1px solid rgba(0,200,100,.3);border-radius:5px;color:#00e87a;cursor:pointer;font-size:10px;font-family:var(--mono);padding:3px 7px;transition:all .15s;white-space:nowrap" onmouseover="this.style.background='rgba(0,200,100,.28)'" onmouseout="this.style.background='rgba(0,200,100,.15)'">💾 Save ▾</button>
+          <button id="global-save-btn" onclick="toggleSidebarDropdown('save-dropdown')" title="Save project" style="background:rgba(0,200,100,.15);border:1px solid rgba(0,200,100,.3);border-radius:5px;color:#00e87a;cursor:pointer;font-size:10px;font-family:var(--mono);padding:3px 7px;transition:all .15s;white-space:nowrap" onmouseover="this.style.background='rgba(0,200,100,.28)'" onmouseout="this.style.background='rgba(0,200,100,.15)'">Save ▾</button>
           <div id="save-dropdown" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:300;background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:4px;min-width:140px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
-            <div onclick="globalSave();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text1)" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">💾 Local</div>
-            <div onclick="gdriveSave();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:#4285f4" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">☁ Google Drive</div>
+            <div onclick="globalSave();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text1)" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">Local</div>
+            <div onclick="gdriveSave();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:#4285f4" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">Google Drive</div>
           </div>
         </div>
       </div>
       <div class="sidebar-project" id="sb-proj-name">${esc(projName)}</div>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-section">Overview</div>
-      <div class="nav-item ${activeView==='dashboard'?'active':''}" onclick="setView('dashboard')" data-view="dashboard">
-        <span class="nav-icon">⊞</span> Dashboard
-      </div>
-      <div class="nav-section">Devices</div>
-      <div class="nav-item ${activeView==='devices'?'active':''}" onclick="setView('devices')" data-view="devices">
-        <span class="nav-icon">◈</span> Device List
-      </div>
-      <div class="nav-item ${activeView==='scan'?'active':''}" onclick="setView('scan')" data-view="scan">
-        <span class="nav-icon">⊛</span> Network Scan
-      </div>
-      <div class="nav-section">Infrastructure</div>
-      <div class="nav-item ${activeView==='racks'?'active':''}" onclick="setView('racks')" data-view="racks">
-        <span class="nav-icon">▤</span> Rack View
-      </div>
-      <div class="nav-item ${activeView==='ports'?'active':''}" onclick="setView('ports')" data-view="ports">
-        <span class="nav-icon">⊡</span> Port Assignment
-      </div>
-      <div class="nav-section">Workspace</div>
-      <div class="nav-item ${activeView==='flowchart'?'active':''}" onclick="setView('flowchart')" data-view="flowchart">
-        <span class="nav-icon">⬡</span> Flowchart
-      </div>
-      <div class="nav-section">Field</div>
-      <div class="nav-item ${activeView==='checklist'?'active':''}" onclick="setView('checklist')" data-view="checklist">
-        <span class="nav-icon">✓</span> <span id="nav-checklist-label">Checklist</span>
-      </div>
-      <div class="nav-item ${activeView==='cableruns'?'active':''}" onclick="setView('cableruns')" data-view="cableruns">
-        <span class="nav-icon">⇄</span> Cable Runs
-      </div>
-      <div class="nav-item ${activeView==='fieldmode'?'active':''}" onclick="setView('fieldmode')" data-view="fieldmode">
-        <span class="nav-icon">📱</span> Field Mode
-      </div>
-      <div class="nav-item ${activeView==='sitemap'?'active':''}" onclick="setView('sitemap')" data-view="sitemap">
-        <span class="nav-icon">🗺</span> Site Map
-      </div>
-      <div class="nav-section">System</div>
-      <div class="nav-item ${activeView==='photos'?'active':''}" onclick="setView('photos')" data-view="photos">
-        <span class="nav-icon">📷</span> Photos
-      </div>
-      <div class="nav-item ${activeView==='settings'?'active':''}" onclick="setView('settings')" data-view="settings">
-        <span class="nav-icon">⚙</span> Settings
-      </div>
-      <div class="nav-item ${activeView==='log'?'active':''}" onclick="setView('log')" data-view="log">
-        <span class="nav-icon">📋</span> Change Log
-      </div>
+      ${section('overview', 'Overview',
+        navItem('dashboard', '⊞', 'Dashboard')
+      )}
+      ${section('devices', 'Devices',
+        navItem('devices', '◈', 'Device List') +
+        navItem('scan', '⊛', 'Network Scan')
+      )}
+      ${section('infra', 'Infrastructure',
+        navItem('racks', '▤', 'Rack View') +
+        navItem('ports', '⊡', 'Port Assignment')
+      )}
+      ${section('workspace', 'Workspace',
+        navItem('flowchart', '⬡', 'Flowchart') +
+        navItem('photos', '📷', 'Photos')
+      )}
+      ${section('field', 'Field',
+        navItem('checklist', '✓', 'Checklist', { id: 'nav-checklist-label', html: 'Checklist' }) +
+        navItem('cableruns', '⇄', 'Cable Runs') +
+        navItem('fieldmode', '📱', 'Field Mode') +
+        navItem('sitemap', '🗺', 'Site Map')
+      )}
+      ${section('system', 'System',
+        navItem('settings', '⚙', 'Settings') +
+        navItem('log', '📋', 'Change Log')
+      )}
     </nav>
     <div class="sidebar-bottom">
       <div style="position:relative">
-        <button class="btn btn-ghost btn-sm" onclick="toggleSidebarDropdown('load-dropdown')" style="width:100%">📂 Load ▾</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleSidebarDropdown('load-dropdown')" style="width:100%">Load ▾</button>
         <div id="load-dropdown" style="display:none;position:absolute;bottom:calc(100% + 4px);left:0;z-index:300;background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:4px;min-width:140px;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
-          <div onclick="importData();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text1)" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">📂 Local</div>
-          <div onclick="gdriveLoad();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:#4285f4" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">☁ Google Drive</div>
+          <div onclick="importData();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text1)" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">Local</div>
+          <div onclick="gdriveLoad();closeSidebarDropdowns()" style="padding:7px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:#4285f4" onmouseover="this.style.background='var(--card2)'" onmouseout="this.style.background=''">Google Drive</div>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="backToProjects()">← Projects</button>
@@ -160,11 +250,10 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-// Initialize an app page (called from each HTML page)
+// Initialize an app page (called once in SPA, or once per page in multi-page mode)
 async function initPage(viewName) {
   await load();
-  // Restore current project — sessionStorage is primary (immune to quota),
-  // localStorage is fallback for tab-restore / bookmarks
+  // Restore current project
   const ssProject = sessionStorage.getItem('netrack_current_project');
   const lsProject = localStorage.getItem('netrack_current_project');
   const savedProject = ssProject || lsProject;
@@ -219,15 +308,39 @@ async function initPage(viewName) {
   });
 }
 
-// Re-render the current view (used after save/delete operations that may have been triggered from any page)
+// Re-render the current view
 function refreshView() {
-  const renderers = {
-    dashboard: 'renderDashboard', devices: 'renderDevices', scan: 'renderScan',
-    racks: 'renderRacks', ports: 'renderPorts', flowchart: 'renderFlowchart',
-    photos: 'renderPhotos', settings: 'renderSettings', log: 'renderLog',
-    checklist: 'renderChecklist', cableruns: 'renderCableRuns',
-    fieldmode: 'renderFieldMode', sitemap: 'renderSiteMap'
-  };
-  const fn = renderers[state.currentView];
-  if (fn && typeof window[fn] === 'function') window[fn]();
+  if (_isSPA) {
+    _spaRenderView(state.currentView);
+  } else {
+    const renderers = {
+      dashboard: 'renderDashboard', devices: 'renderDevices', scan: 'renderScan',
+      racks: 'renderRacks', ports: 'renderPorts', flowchart: 'renderFlowchart',
+      photos: 'renderPhotos', settings: 'renderSettings', log: 'renderLog',
+      checklist: 'renderChecklist', cableruns: 'renderCableRuns',
+      fieldmode: 'renderFieldMode', sitemap: 'renderSiteMap'
+    };
+    const fn = renderers[state.currentView];
+    if (fn && typeof window[fn] === 'function') window[fn]();
+  }
+}
+
+// ── Topbar overflow menu helper ──
+function openTopbarMore(menuHtml) {
+  let menu = document.getElementById('topbar-more-menu');
+  if (menu) { menu.remove(); return; }
+  menu = document.createElement('div');
+  menu.id = 'topbar-more-menu';
+  menu.className = 'topbar-overflow-menu';
+  menu.innerHTML = menuHtml;
+  document.getElementById('topbar-actions').appendChild(menu);
+  setTimeout(() => {
+    const close = (e) => {
+      if (!menu.contains(e.target) && !e.target.closest('[onclick*="openTopbarMore"]')) {
+        menu.remove();
+      }
+      document.removeEventListener('click', close);
+    };
+    document.addEventListener('click', close);
+  }, 10);
 }

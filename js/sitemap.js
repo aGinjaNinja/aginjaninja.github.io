@@ -64,7 +64,7 @@ function deleteLocation(id) {
 }
 
 // ═══════════════════════════════════════════
-//  FEATURE 13: SITE MAP
+//  FEATURE 13: SITE MAP (Multi-Floor)
 // ═══════════════════════════════════════════
 let _smPan={x:0,y:0},_smZoom=1;
 let _smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0},_smDragMoved=false;
@@ -74,21 +74,151 @@ let _smDrawing=false;
 let _smCurrentLine=null;
 let _smMarkerDrag=null;
 let _smTouchPan=null,_smPinch=null;
+let _smCurrentFloorId=null;
 
 function _smApplyTransform() {
   const pan=document.getElementById('sm-pan');
   if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
 }
 
+// ── Multi-floor helpers ──
+
+function _smEnsureFloors(p) {
+  if (p.siteMapFloors) return;
+  if (p.siteMap) {
+    const floorId = genId();
+    p.siteMapFloors = [{
+      id: floorId, name: 'Floor 1',
+      markers: p.siteMap.markers || [],
+      cableLines: p.siteMap.cableLines || []
+    }];
+    p._smLegacyFloorId = floorId;
+    delete p.siteMap;
+  } else {
+    p.siteMapFloors = [];
+  }
+}
+
+function _smGetFloor(p) {
+  _smEnsureFloors(p);
+  if (!p.siteMapFloors.length) return null;
+  let floor = _smCurrentFloorId ? p.siteMapFloors.find(f => f.id === _smCurrentFloorId) : null;
+  if (!floor) { floor = p.siteMapFloors[0]; _smCurrentFloorId = floor.id; }
+  if (!floor.markers) floor.markers = [];
+  if (!floor.cableLines) floor.cableLines = [];
+  return floor;
+}
+
+async function _smLoadFloorImage(p, floor) {
+  if (floor._data) return floor._data;
+  let data = await _lazyGetPhotoData('sitemap_' + p.id + '_' + floor.id);
+  if (!data && p._smLegacyFloorId === floor.id) {
+    data = await _lazyGetPhotoData('sitemap_' + p.id);
+    if (data) {
+      await _idbSavePhotoData('sitemap_' + p.id + '_' + floor.id, data);
+      _idbDeletePhotoData('sitemap_' + p.id).catch(()=>{});
+      delete p._smLegacyFloorId;
+    }
+  }
+  if (data) floor._data = data;
+  return data;
+}
+
+// ── Floor management ──
+
+function smSelectFloor(id) {
+  _smCurrentFloorId = id;
+  _smPan={x:0,y:0}; _smZoom=1;
+  _smDrawing=false; _smCurrentLine=null;
+  renderSiteMap();
+}
+
+function smAddFloor() {
+  openModal(`
+    <h3>Add Floor</h3>
+    <div class="form-row"><label>Floor Name</label>
+      <input class="form-control" id="sm-floor-name" placeholder="e.g. Floor 2, Basement, Roof" autofocus></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smSaveNewFloor()">Add Floor</button>
+    </div>`);
+  setTimeout(()=>document.getElementById('sm-floor-name')?.focus(),50);
+}
+
+function smSaveNewFloor() {
+  const name = document.getElementById('sm-floor-name')?.value?.trim();
+  if (!name) return toast('Floor name is required','error');
+  const p = getProject();
+  _smEnsureFloors(p);
+  const floor = { id: genId(), name, markers: [], cableLines: [] };
+  p.siteMapFloors.push(floor);
+  _smCurrentFloorId = floor.id;
+  logChange(`Floor added: ${name}`);
+  save(); closeModal(); renderSiteMap();
+  toast('Floor added — upload a floor plan image','success');
+}
+
+function smRenameFloor(id) {
+  const p = getProject();
+  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
+  if (!floor) return;
+  openModal(`
+    <h3>Rename Floor</h3>
+    <div class="form-row"><label>Floor Name</label>
+      <input class="form-control" id="sm-floor-rename" value="${esc(floor.name)}" autofocus></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smSaveRenameFloor('${id}')">Save</button>
+    </div>`);
+  setTimeout(()=>{const el=document.getElementById('sm-floor-rename');if(el){el.focus();el.select();}},50);
+}
+
+function smSaveRenameFloor(id) {
+  const name = document.getElementById('sm-floor-rename')?.value?.trim();
+  if (!name) return toast('Name is required','error');
+  const p = getProject();
+  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
+  if (!floor) return;
+  floor.name = name;
+  logChange(`Floor renamed: ${name}`);
+  save(); closeModal(); renderSiteMap();
+}
+
+function smDeleteFloor(id) {
+  const p = getProject();
+  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
+  if (!floor) return;
+  if (!confirm(`Delete "${floor.name}"? This will remove its map, markers, and cable runs.`)) return;
+  _idbDeletePhotoData('sitemap_' + p.id + '_' + floor.id).catch(()=>{});
+  p.siteMapFloors = p.siteMapFloors.filter(f=>f.id!==id);
+  if (_smCurrentFloorId === id) _smCurrentFloorId = p.siteMapFloors[0]?.id || null;
+  logChange(`Floor deleted: ${floor.name}`);
+  save(); renderSiteMap();
+}
+
+// ── Render ──
+
 async function renderSiteMap() {
   const p = getProject();
-  if (!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
-  if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
-  if (!p.siteMap.markers) p.siteMap.markers=[];
-  if (!p.siteMap.data) {
-    const smData = await _lazyGetPhotoData('sitemap_' + p.id);
-    if (smData) p.siteMap.data = smData;
-  }
+  _smEnsureFloors(p);
+  const floor = _smGetFloor(p);
+
+  if (floor) await _smLoadFloorImage(p, floor);
+
+  const hasImage = floor && floor._data;
+  const floors = p.siteMapFloors;
+
+  const floorTabsHtml = floors.length > 0 ? `
+    <div class="sm-floor-tabs">
+      ${floors.map(f => `
+        <div class="sm-floor-tab ${f.id === _smCurrentFloorId ? 'active' : ''}" onclick="smSelectFloor('${f.id}')">
+          <span>${esc(f.name)}</span>
+          ${_smEditMode && floors.length > 1 ? `<span class="sm-floor-tab-x" onclick="event.stopPropagation();smDeleteFloor('${f.id}')" title="Delete floor">✕</span>` : ''}
+        </div>
+      `).join('')}
+      <div class="sm-floor-tab sm-floor-add" onclick="smAddFloor()" title="Add floor">+</div>
+      ${_smEditMode && floor ? `<div class="sm-floor-tab sm-floor-rename" onclick="smRenameFloor('${floor.id}')" title="Rename floor">✎</div>` : ''}
+    </div>` : '';
 
   setTopbarActions(`
     <select class="form-control" style="width:160px;padding:4px 8px;font-size:12px" onchange="smSetOverlay(this.value)">
@@ -100,15 +230,28 @@ async function renderSiteMap() {
       title="${_smEditMode?'Click to exit edit mode':'Click to enable edit mode'}">
       ${_smEditMode?'🔓 Edit Mode ON':'🔒 View Only'}
     </button>
-    ${p.siteMap.data?`<button class="btn btn-ghost btn-sm" onclick="clearSiteMap()">✕ Clear Map</button>`:''}
-    ${!p.siteMap.data?`<label class="btn btn-primary btn-sm" style="cursor:pointer">📁 Upload Floor Plan<input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)"></label>`:''}
+    ${hasImage?`<button class="btn btn-ghost btn-sm" onclick="clearSiteMap()">✕ Clear Map</button>`:''}
+    ${floor && !floor._data?`<label class="btn btn-primary btn-sm" style="cursor:pointer">📁 Upload Floor Plan<input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)"></label>`:''}
   `);
 
-  if (!p.siteMap.data) {
+  if (!floor) {
     document.getElementById('view-area').innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">🗺</div>
-        <h3>No floor plan uploaded</h3>
+        <h3>No floor plans</h3>
+        <p>Add a floor and upload a floor plan image to get started.</p>
+        <br>
+        <button class="btn btn-primary" onclick="smAddFloor()">+ Add Floor</button>
+      </div>`;
+    return;
+  }
+
+  if (!floor._data) {
+    document.getElementById('view-area').innerHTML = `
+      ${floorTabsHtml}
+      <div class="empty-state">
+        <div class="empty-icon">🗺</div>
+        <h3>No floor plan for ${esc(floor.name)}</h3>
         <p>Upload a floor plan image to place markers for racks, rooms, and equipment.</p>
         <br>
         <label class="btn btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px">
@@ -119,8 +262,8 @@ async function renderSiteMap() {
     return;
   }
 
-  const markers = p.siteMap.markers;
-  const cableLines = p.siteMap.cableLines;
+  const markers = floor.markers;
+  const cableLines = floor.cableLines;
   const isMarkers = _smOverlay==='markers';
   const canEdit = _smEditMode;
 
@@ -143,7 +286,7 @@ async function renderSiteMap() {
 
   const cursor = !canEdit ? 'grab' : 'crosshair';
 
-  // Build marker HTML — IDF markers get cabinet icon, others get pin
+  // Build marker HTML
   const markersHtml = markers.map(m => {
     const sz = m.size || 1;
     const dragAttr = canEdit ? `onmousedown="event.stopPropagation();smMarkerDragStart(event,'${m.id}')" ontouchstart="event.stopPropagation();smMarkerDragStart(event,'${m.id}')"` : '';
@@ -163,15 +306,16 @@ async function renderSiteMap() {
     </div>`;
   }).join('');
 
-  // Build IDF closets sidebar section (racks that can be dragged onto the map)
-  const placedRackIds = new Set(markers.filter(m => m.rackId).map(m => m.rackId));
+  // IDF closets sidebar — check placement across ALL floors
+  const allPlacedRackIds = new Set();
+  p.siteMapFloors.forEach(f => (f.markers || []).forEach(m => { if (m.rackId) allPlacedRackIds.add(m.rackId); }));
   const racks = p.racks || [];
   const idfSidebar = isMarkers && racks.length > 0 ? `
     <div style="margin-bottom:12px">
       <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">IDF Closets (${racks.length})</div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:6px">${canEdit ? 'Drag onto map to place' : 'Enable Edit Mode to place'}</div>
       ${racks.map(r => {
-        const placed = placedRackIds.has(r.id);
+        const placed = allPlacedRackIds.has(r.id);
         return `<div class="sm-idf-sidebar-item ${placed ? 'placed' : ''}"
           ${canEdit && !placed ? `onmousedown="smStartIdfDrag(event,'${r.id}')" ontouchstart="smStartIdfDrag(event,'${r.id}')"` : ''}
           style="cursor:${canEdit && !placed ? 'grab' : 'default'}">
@@ -186,18 +330,19 @@ async function renderSiteMap() {
   ` : '';
 
   document.getElementById('view-area').innerHTML = `
-    <div style="display:flex;gap:14px;height:calc(100vh - 130px)">
+    ${floorTabsHtml}
+    <div style="display:flex;gap:14px;height:calc(100vh - 165px)">
       <div style="flex:1;position:relative">
         ${canEdit ? `<div class="sm-edit-badge">✎ EDIT MODE${!isMarkers ? (_smDrawing ? ' · DRAWING — click to add points, dbl-click to finish' : ' · Click to start a cable run') : ' · Dbl-click map to place marker'}</div>` : ''}
         ${canEdit && !isMarkers && _smDrawing ? `<div class="sm-drawing-hint">Click: add point &nbsp;|&nbsp; Double-click: finish &nbsp;|&nbsp; ESC: cancel</div>` : ''}
         <div id="sm-canvas" class="sitemap-canvas ${canEdit?'edit-mode':''}"
-          style="width:100%;height:calc(100vh - 150px);cursor:${cursor};user-select:none"
+          style="width:100%;height:calc(100vh - 185px);cursor:${cursor};user-select:none"
           onmousedown="smMouseDown(event)" onmousemove="smMouseMove(event)" onmouseup="smMouseUp(event)"
           onclick="smCanvasClick(event)"
           ondblclick="smDblClick(event)" onwheel="smWheel(event)"
           ontouchstart="smTouchStart(event)" ontouchmove="smTouchMove(event)" ontouchend="smTouchEnd(event)">
           <div id="sm-pan" style="position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})">
-            <img id="sm-img" src="${p.siteMap.data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
+            <img id="sm-img" src="${floor._data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
             <svg id="sm-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;pointer-events:none"
               viewBox="0 0 100 100" preserveAspectRatio="none">
               ${svgLines}
@@ -255,23 +400,26 @@ function uploadSiteMap(e) {
   const reader = new FileReader();
   reader.onload = async ev => {
     const p = getProject();
-    if (!p.siteMap) p.siteMap={data:null,markers:[]};
+    const floor = _smGetFloor(p);
+    if (!floor) return toast('Add a floor first','error');
     const dataUrl = ev.target.result;
-    await _idbSavePhotoData('sitemap_' + p.id, dataUrl);
-    p.siteMap.data = dataUrl;
+    await _idbSavePhotoData('sitemap_' + p.id + '_' + floor.id, dataUrl);
+    floor._data = dataUrl;
     _smPan={x:0,y:0}; _smZoom=1;
-    logChange('Site map floor plan uploaded');
+    logChange(`Floor plan uploaded: ${floor.name}`);
     save(); renderSiteMap(); toast('Floor plan uploaded','success');
   };
   reader.readAsDataURL(file);
 }
 
 function clearSiteMap() {
-  if (!confirm('Clear the floor plan? Markers will be kept.')) return;
-  const p=getProject();
-  if(p.siteMap) p.siteMap.data=null;
-  _idbDeletePhotoData('sitemap_' + p.id).catch(() => {});
-  logChange('Site map floor plan cleared');
+  const p = getProject();
+  const floor = _smGetFloor(p);
+  if (!floor) return;
+  if (!confirm(`Clear the floor plan for "${floor.name}"? Markers will be kept.`)) return;
+  floor._data = null;
+  _idbDeletePhotoData('sitemap_' + p.id + '_' + floor.id).catch(() => {});
+  logChange(`Floor plan cleared: ${floor.name}`);
   save(); renderSiteMap();
 }
 
@@ -309,7 +457,6 @@ function smWheel(e) {
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
   const delta=e.deltaY<0?1.1:0.9;
   const newZoom=Math.max(0.2,Math.min(5,_smZoom*delta));
-  // Zoom toward mouse position
   _smPan.x=mx-(mx-_smPan.x)*(newZoom/_smZoom);
   _smPan.y=my-(my-_smPan.y)*(newZoom/_smZoom);
   _smZoom=newZoom;
@@ -347,7 +494,6 @@ function smResetView() {
 function smTouchStart(e) {
   if (e.touches.length===1) {
     const t=e.touches[0];
-    // Don't start pan if touching a marker (let marker drag handle it)
     const el=document.elementFromPoint(t.clientX,t.clientY);
     if(el?.closest?.('[data-marker-id]')) return;
     e.preventDefault();
@@ -388,7 +534,6 @@ function smTouchMove(e) {
 }
 
 function smTouchEnd(e) {
-  // Single tap without drag → treat as click for edit mode
   if(_smTouchPan&&!_smTouchPan.moved&&e.changedTouches.length===1) {
     const t=e.changedTouches[0];
     if(_smEditMode&&Date.now()-_smTouchPan.startTime<400) {
@@ -404,7 +549,8 @@ function smTouchEnd(e) {
 function smDblClick(e) {
   if(_smDragMoved) return;
   const p=getProject();
-  if(!p.siteMap?.data) return;
+  const floor=_smGetFloor(p);
+  if(!floor?._data) return;
   if(!_smEditMode) return;
   if(_smOverlay==='cableruns') {
     if(_smDrawing && _smCurrentLine) {
@@ -455,7 +601,8 @@ function smEventToImgPct(e) {
 
 function smRedrawLines() {
   const p = getProject();
-  const cableLines = p.siteMap?.cableLines||[];
+  const floor = _smGetFloor(p);
+  const cableLines = floor?.cableLines||[];
   const svgLines = cableLines.map(line => {
     if (!line.points || line.points.length < 2) return '';
     const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
@@ -524,8 +671,9 @@ function smSaveCableLine() {
   const color = document.getElementById('scl-color')?.value||'#ffaa00';
   const cableType = document.getElementById('scl-type')?.value||'';
   const p = getProject();
-  if (!p.siteMap.cableLines) p.siteMap.cableLines=[];
-  p.siteMap.cableLines.push({ id:genId(), points:line.points, label, color, cableType });
+  const floor = _smGetFloor(p);
+  if (!floor) return;
+  floor.cableLines.push({ id:genId(), points:line.points, label, color, cableType });
   logChange(`Site map cable run added: ${label||'(unlabeled)'}`);
   save(); closeModal(); window._smPendingLine=null; renderSiteMap();
   toast('Cable run saved','success');
@@ -534,7 +682,8 @@ function smSaveCableLine() {
 function smCableLineClick(id) {
   if (!_smEditMode) return;
   const p = getProject();
-  const line = (p.siteMap?.cableLines||[]).find(l=>l.id===id);
+  const floor = _smGetFloor(p);
+  const line = (floor?.cableLines||[]).find(l=>l.id===id);
   if (!line) return;
   openModal(`
     <h3>Edit Cable Run</h3>
@@ -560,7 +709,8 @@ function smCableLineClick(id) {
 
 function smUpdateCableLine(id) {
   const p = getProject();
-  const line = (p.siteMap?.cableLines||[]).find(l=>l.id===id);
+  const floor = _smGetFloor(p);
+  const line = (floor?.cableLines||[]).find(l=>l.id===id);
   if (!line) return;
   line.label = document.getElementById('ecl-label')?.value?.trim()||'';
   line.color = document.getElementById('ecl-color')?.value||'#ffaa00';
@@ -570,8 +720,9 @@ function smUpdateCableLine(id) {
 
 function smDeleteCableLine(id) {
   const p = getProject();
-  if (!p.siteMap?.cableLines) return;
-  p.siteMap.cableLines = p.siteMap.cableLines.filter(l=>l.id!==id);
+  const floor = _smGetFloor(p);
+  if (!floor) return;
+  floor.cableLines = floor.cableLines.filter(l=>l.id!==id);
   logChange('Site map cable run deleted');
   save(); closeModal(); renderSiteMap();
 }
@@ -580,7 +731,8 @@ function smDeleteCableLine(id) {
 
 function openSmMarkerModal(id,xPct,yPct) {
   const p=getProject();
-  const m=id?(p.siteMap?.markers||[]).find(x=>x.id===id):null;
+  const floor=_smGetFloor(p);
+  const m=id?(floor?.markers||[]).find(x=>x.id===id):null;
   const rackOpts=`<option value="">— None —</option>`+
     p.racks.map(r=>`<option value="${r.id}" ${m?.rackId===r.id?'selected':''}>${esc(r.name)}</option>`).join('');
   const sz = m?.size||1;
@@ -621,8 +773,8 @@ function saveSmMarker(id,xPct,yPct) {
   const label=document.getElementById('sm-label')?.value?.trim();
   if(!label) return toast('Label is required','error');
   const p=getProject();
-  if(!p.siteMap) p.siteMap={data:null,markers:[],cableLines:[]};
-  if(!p.siteMap.markers) p.siteMap.markers=[];
+  const floor=_smGetFloor(p);
+  if(!floor) return;
   const data={
     label, type:document.getElementById('sm-type')?.value||'room',
     color:document.getElementById('sm-color')?.value||'#00c8ff',
@@ -630,11 +782,11 @@ function saveSmMarker(id,xPct,yPct) {
     rackId:document.getElementById('sm-rack')?.value||null,
   };
   if(id){
-    const idx=p.siteMap.markers.findIndex(x=>x.id===id);
-    if(idx>=0) Object.assign(p.siteMap.markers[idx],data);
+    const idx=floor.markers.findIndex(x=>x.id===id);
+    if(idx>=0) Object.assign(floor.markers[idx],data);
     logChange(`Site map marker updated: ${label}`);
   } else {
-    p.siteMap.markers.push({id:genId(),x:parseFloat(xPct),y:parseFloat(yPct),...data});
+    floor.markers.push({id:genId(),x:parseFloat(xPct),y:parseFloat(yPct),...data});
     logChange(`Site map marker added: ${label}`);
   }
   save(); closeModal(); renderSiteMap(); toast(id?'Marker updated':'Marker added','success');
@@ -642,7 +794,9 @@ function saveSmMarker(id,xPct,yPct) {
 
 function deleteSmMarker(id) {
   const p=getProject();
-  p.siteMap.markers=(p.siteMap.markers||[]).filter(x=>x.id!==id);
+  const floor=_smGetFloor(p);
+  if(!floor) return;
+  floor.markers=floor.markers.filter(x=>x.id!==id);
   logChange('Site map marker deleted');
   save(); closeModal(); renderSiteMap();
 }
@@ -686,7 +840,8 @@ function smMarkerDragStart(e, markerId) {
       const xPct = Math.max(0,Math.min(100,(x-rect.left)/rect.width*100));
       const yPct = Math.max(0,Math.min(100,(y-rect.top)/rect.height*100));
       const p = getProject();
-      const m = (p.siteMap?.markers||[]).find(mk=>mk.id===markerId);
+      const floor = _smGetFloor(p);
+      const m = (floor?.markers||[]).find(mk=>mk.id===markerId);
       if (m) {
         m.x=parseFloat(xPct.toFixed(2));
         m.y=parseFloat(yPct.toFixed(2));
@@ -753,17 +908,17 @@ function smStartIdfDrag(e, rackId) {
     const yPct=Math.max(0,Math.min(100,((y-imgRect.top)/imgRect.height*100)));
 
     const pNow=getProject();
-    if(!pNow.siteMap) pNow.siteMap={data:null,markers:[],cableLines:[]};
-    if(!pNow.siteMap.markers) pNow.siteMap.markers=[];
+    const floor=_smGetFloor(pNow);
+    if(!floor) return;
 
-    // If a marker for this rack already exists, move it
-    const existing=pNow.siteMap.markers.find(m=>m.rackId===rackId);
+    // If a marker for this rack already exists on this floor, move it
+    const existing=floor.markers.find(m=>m.rackId===rackId);
     if(existing){
       existing.x=parseFloat(xPct.toFixed(2));
       existing.y=parseFloat(yPct.toFixed(2));
       logChange(`IDF marker moved: ${rack.name}`);
     } else {
-      pNow.siteMap.markers.push({
+      floor.markers.push({
         id:genId(),
         x:parseFloat(xPct.toFixed(2)),
         y:parseFloat(yPct.toFixed(2)),
@@ -788,17 +943,16 @@ function smStartIdfDrag(e, rackId) {
 function smMarkerClick(id) {
   if(_smMarkerDrag?.moved) { _smMarkerDrag=null; return; }
   const p=getProject();
-  const m=(p.siteMap?.markers||[]).find(x=>x.id===id);
+  const floor=_smGetFloor(p);
+  const m=(floor?.markers||[]).find(x=>x.id===id);
   if(!m) return;
   const rack=m.rackId?p.racks.find(r=>r.id===m.rackId):null;
 
   if(m.type==='idf') {
     const rackLocation=rack?.location||'';
-    // Find racks at this location
     const locationRacks=rackLocation
       ? (p.racks||[]).filter(r=>r.location===rackLocation)
       : rack ? [rack] : [];
-    // Find matching photo folder
     const matchingFolder=(p.photoFolders||[]).find(f=>{
       if(!rackLocation) return f.name===m.label||f.name.includes(m.label);
       return f.location===rackLocation||f.name===rackLocation||f.name.includes(rackLocation);

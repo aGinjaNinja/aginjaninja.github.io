@@ -47,6 +47,8 @@ async function openPhotoViewer(idx) {
       <div class="pv-caption">${esc(ph.caption || ph.name || 'Photo ' + (idx + 1))}</div>
       <div class="pv-counter">${pos + 1} / ${total}</div>
       <div class="pv-actions">
+        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();downloadOriginalPhoto(${idx})" title="Download original photo">⬇ Original</button>
+        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();downloadLabeledPhoto(${idx})" title="Download photo with labels">⬇ Labeled</button>
         <button class="btn btn-ghost btn-sm" onclick="closePhotoViewer();openPhotoEditor(${idx})" style="color:#fff;border-color:rgba(255,255,255,.3)">Edit</button>
       </div>
     </div>
@@ -71,6 +73,12 @@ function closePhotoViewer() {
   overlay.remove();
 }
 
+function _photosPageMoreMenu() {
+  return '<div class="topbar-overflow-item" onclick="createPhotoFolder();document.getElementById(\'topbar-more-menu\')?.remove()">📁 New Folder</div>' +
+    '<div class="topbar-overflow-item" onclick="downloadPhotosAsZip();document.getElementById(\'topbar-more-menu\')?.remove()">⬇ Download All as ZIP</div>' +
+    '<div class="topbar-overflow-item" onclick="document.getElementById(\'photo-zip-upload\').click();document.getElementById(\'topbar-more-menu\')?.remove()">⬆ Upload from ZIP</div>';
+}
+
 function renderPhotos() {
   if (_photoResizeObs) { _photoResizeObs.disconnect(); _photoResizeObs = null; }
   const p = getProject();
@@ -84,11 +92,9 @@ function renderPhotos() {
   }
 
   setTopbarActions(`
-    <button class="btn btn-ghost btn-sm" onclick="createPhotoFolder()">📁 New Folder</button>
     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-upload').click()">📷 Add Photos</button>
     <button class="btn btn-primary btn-sm" onclick="document.getElementById('photo-capture').click()">📸 Take Photo</button>
-    <button class="btn btn-ghost btn-sm" onclick="downloadPhotosAsZip()" title="Download all photos as ZIP with folder structure">⬇ ZIP Download</button>
-    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-zip-upload').click()" title="Upload photos from ZIP preserving folder structure">⬆ ZIP Upload</button>
+    <button class="btn btn-ghost btn-sm" onclick="openTopbarMore(_photosPageMoreMenu())">More ▾</button>
   `);
 
   // Generate thumbnails for existing photos that don't have them (background migration)
@@ -174,7 +180,11 @@ function renderPhotos() {
           <div class="photo-date">${ph.ts ? new Date(ph.ts).toLocaleDateString() : (ph.date ? new Date(ph.date).toLocaleDateString() : '')}${assigned?` · <span style="color:var(--accent)">${assigned} tagged</span>`:''}</div>
         </div>
         ${folderBadge}
-        ${p.photoFolders.length > 0 ? `<button style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,.65);border:1px solid var(--border2);border-radius:4px;color:var(--text2);cursor:pointer;width:22px;height:22px;font-size:11px;display:none;align-items:center;justify-content:center;" class="photo-move-btn" title="Move to folder" onclick="event.stopPropagation();movePhotoToFolder(${idx})">📁</button>` : ''}
+        <div class="photo-card-actions">
+          <button class="photo-card-btn" title="Download original" onclick="event.stopPropagation();downloadOriginalPhoto(${idx})">⬇</button>
+          <button class="photo-card-btn" title="Download with labels" onclick="event.stopPropagation();downloadLabeledPhoto(${idx})">🏷</button>
+          ${p.photoFolders.length > 0 ? `<button class="photo-card-btn" title="Move to folder" onclick="event.stopPropagation();movePhotoToFolder(${idx})">📁</button>` : ''}
+        </div>
         <button class="photo-del" title="Delete" onclick="event.stopPropagation();deletePhoto(${idx})">✕</button>
       </div>`;
     }).join('');
@@ -652,13 +662,9 @@ async function openPhotoEditor(idx, preservePanZoom) {
     <button id="photo-lock-btn" class="btn btn-sm ${_photoLayoutLocked ? 'btn-primary' : 'btn-ghost'}" onclick="togglePhotoLock()" title="${_photoLayoutLocked ? 'Unlock layout to move device tags' : 'Lock layout to prevent accidental moves'}" style="${_photoLayoutLocked ? 'border-color:var(--amber);background:rgba(255,170,0,.15);color:var(--amber)' : ''}">
       ${_photoLayoutLocked ? '🔒 Layout Locked' : '🔓 Lock Layout'}
     </button>
-    <button class="btn btn-ghost btn-sm" onclick="rotatePhoto(${idx})" title="Rotate 90° clockwise">↻ Rotate</button>
-    <label class="btn btn-ghost btn-sm" style="cursor:pointer" title="Replace photo">
-      🔄 Replace
-      <input type="file" accept="image/*" style="display:none" onchange="replacePhoto(event,${idx})">
-    </label>
-    <button class="btn btn-ghost btn-sm" onclick="movePhotoToFolder(${idx})" title="Move to folder">📁 Move</button>
-    <button class="btn btn-danger btn-sm" onclick="deletePhoto(${idx});renderPhotos()">Delete</button>
+    <button class="btn btn-ghost btn-sm" onclick="downloadOriginalPhoto(${idx})" title="Download original photo">⬇ Original</button>
+    <button class="btn btn-ghost btn-sm" onclick="downloadLabeledPhoto(${idx})" title="Download photo with labels">⬇ Labeled</button>
+    <button class="btn btn-ghost btn-sm" onclick="openTopbarMore(_photoEditorMoreMenu(${idx}))">More ▾</button>
     <button class="btn btn-primary btn-sm" onclick="savePhotoEditor(${idx})">Save</button>
   `);
 
@@ -1337,6 +1343,19 @@ function savePhotoEditor(idx) {
   openPhotoEditor(idx);
 }
 
+function _photoEditorMoreMenu(idx) {
+  return `
+    <div class="topbar-overflow-item" onclick="rotatePhoto(${idx});document.getElementById('topbar-more-menu')?.remove()">↻ Rotate</div>
+    <label class="topbar-overflow-item" style="cursor:pointer;display:block">
+      🔄 Replace Photo
+      <input type="file" accept="image/*" style="display:none" onchange="replacePhoto(event,${idx});document.getElementById('topbar-more-menu')?.remove()">
+    </label>
+    <div class="topbar-overflow-item" onclick="movePhotoToFolder(${idx});document.getElementById('topbar-more-menu')?.remove()">📁 Move to Folder</div>
+    <div style="border-top:1px solid var(--border);margin:4px 0"></div>
+    <div class="topbar-overflow-item" style="color:var(--red)" onclick="deletePhoto(${idx});renderPhotos();document.getElementById('topbar-more-menu')?.remove()">✕ Delete Photo</div>
+  `;
+}
+
 function togglePhotoLock() {
   _photoLayoutLocked = !_photoLayoutLocked;
   openPhotoEditor(_photoEditIdx, true);
@@ -1444,6 +1463,126 @@ function _getPhotoFolderPath(folders, folderId) {
 function _mimeToExt(mime) {
   const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp', 'image/svg+xml': '.svg', 'image/heic': '.heic', 'image/heif': '.heif', 'image/tiff': '.tiff', 'image/avif': '.avif', 'image/x-icon': '.ico' };
   return map[mime] || '.jpg';
+}
+
+// ═══════════════════════════════════════════
+//  PHOTO DOWNLOAD — Original + Labeled
+// ═══════════════════════════════════════════
+
+async function downloadOriginalPhoto(idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const data = await _lazyGetPhotoData(ph.id);
+  if (!data) return toast('Photo data not found', 'error');
+  const mime = (data.match(/^data:([^;]+);/) || [])[1] || 'image/jpeg';
+  const ext = _mimeToExt(mime);
+  let name = (ph.caption || ph.name || 'photo').replace(/[<>:"/\\|?*]/g, '_');
+  if (!/\.\w+$/.test(name)) name += ext;
+  _triggerPhotoDownload(data, name);
+  toast('Original photo downloaded', 'success');
+}
+
+async function downloadLabeledPhoto(idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const data = await _lazyGetPhotoData(ph.id);
+  if (!data) return toast('Photo data not found', 'error');
+
+  const img = new Image();
+  img.onload = () => {
+    // Apply rotation if any
+    const rot = (ph.rotation || 0) % 360;
+    const swap = (rot === 90 || rot === 270);
+    const cw = swap ? img.height : img.width;
+    const ch = swap ? img.width  : img.height;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+
+    // Draw rotated image
+    ctx.save();
+    ctx.translate(cw / 2, ch / 2);
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    ctx.restore();
+
+    // Draw labels
+    const assignments = (ph.assignments || []).filter(a => a?.itemId && a.x != null);
+    assignments.forEach((a, si) => {
+      const res = resolvePhotoItem(a.itemId, p);
+      if (!res) return;
+      const c = a.color || SLOT_COLORS[si % SLOT_COLORS.length];
+      const x = a.x * cw;
+      const y = a.y * ch;
+      const size = a.size || 1.0;
+      const fontSize = Math.round(14 * size * Math.max(1, cw / 800));
+      const padding = Math.round(6 * size * Math.max(1, cw / 800));
+      const dotR = Math.round(5 * size * Math.max(1, cw / 800));
+
+      ctx.font = `bold ${fontSize}px 'Segoe UI', sans-serif`;
+      const textW = ctx.measureText(res.label).width;
+      const boxW = textW + padding * 2;
+      const boxH = fontSize + padding * 2;
+
+      // Box (above the pin point)
+      const boxX = x - boxW / 2;
+      const boxY = y - boxH - dotR - 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeStyle = c;
+      ctx.lineWidth = Math.max(1.5, 2 * size * Math.max(1, cw / 1200));
+      const r = Math.round(4 * size);
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(boxX, boxY, boxW, boxH, r);
+      } else {
+        ctx.rect(boxX, boxY, boxW, boxH);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      // Text
+      ctx.fillStyle = c;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(res.label, x, boxY + boxH / 2);
+
+      // Dot (pin point)
+      ctx.beginPath();
+      ctx.arc(x, y, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = c;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    // Download
+    let name = (ph.caption || ph.name || 'photo').replace(/[<>:"/\\|?*]/g, '_') + '_labeled';
+    if (!/\.\w+$/.test(name)) name += '.jpg';
+    canvas.toBlob(blob => {
+      if (!blob) { toast('Could not render labeled photo', 'error'); return; }
+      const url = URL.createObjectURL(blob);
+      _triggerPhotoDownload(url, name, true);
+      toast('Labeled photo downloaded', 'success');
+    }, 'image/jpeg', 0.92);
+  };
+  img.onerror = () => toast('Could not load photo for labeling', 'error');
+  img.src = data;
+}
+
+function _triggerPhotoDownload(urlOrData, filename, isObjectUrl) {
+  const a = document.createElement('a');
+  a.href = urlOrData;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (isObjectUrl) setTimeout(() => URL.revokeObjectURL(urlOrData), 5000);
 }
 
 async function downloadPhotosAsZip() {

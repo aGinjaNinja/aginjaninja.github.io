@@ -12,12 +12,42 @@ let _driveTokenClient = null;
 let _driveToken       = null;
 let _driveCallback    = null;
 
+// Pick up token from manual OAuth redirect flow (Capacitor/WebView fallback)
+(function _checkManualToken() {
+  try {
+    const t = localStorage.getItem('_gdrive_manual_token');
+    const exp = parseInt(localStorage.getItem('_gdrive_manual_token_expiry') || '0');
+    if (t && exp > Date.now()) {
+      _driveToken = t;
+      localStorage.removeItem('_gdrive_manual_token');
+      localStorage.removeItem('_gdrive_manual_token_expiry');
+      setTimeout(() => { if (typeof toast === 'function') toast('Signed in to Google Drive', 'success'); }, 500);
+    } else if (t) {
+      localStorage.removeItem('_gdrive_manual_token');
+      localStorage.removeItem('_gdrive_manual_token_expiry');
+    }
+  } catch(e) {}
+})();
+
+async function _ensureGisLoaded() {
+  if (window.google?.accounts?.oauth2) return true;
+  // Try loading the script dynamically if not present
+  if (!document.querySelector('script[src*="accounts.google.com/gsi/client"]')) {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    document.head.appendChild(s);
+  }
+  // Wait up to 8 seconds for it to load
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 200));
+    if (window.google?.accounts?.oauth2) return true;
+  }
+  return false;
+}
+
 function _initDriveClient() {
   if (_driveTokenClient) return true;
-  if (!window.google?.accounts?.oauth2) {
-    toast('Google Identity Services not loaded yet — try again in a moment.', 'error');
-    return false;
-  }
+  if (!window.google?.accounts?.oauth2) return false;
   if (!GDRIVE_CLIENT_ID || GDRIVE_CLIENT_ID.startsWith('YOUR_CLIENT_ID')) {
     openModal(`
       <h3>☁ Google Drive Setup</h3>
@@ -45,15 +75,43 @@ function _initDriveClient() {
     callback: (resp) => {
       if (resp.error) { toast('Google auth error: ' + resp.error, 'error'); return; }
       _driveToken = resp.access_token;
+      _gdriveAutoSyncEnabled = true;
       if (_driveCallback) { const cb = _driveCallback; _driveCallback = null; cb(); }
     }
   });
   return true;
 }
 
-function _driveAuth(callback) {
+async function _driveAuth(callback) {
+  // If we already have a token (including from manual flow), just use it
+  if (_driveToken) { callback(); return; }
+
+  // Native Android sign-in via Capacitor plugin
+  if (window.Capacitor?.isNativePlatform?.()) {
+    try {
+      toast('Signing in to Google…', 'info');
+      const result = await window.Capacitor.Plugins.GoogleAuth.signIn();
+      _driveToken = result.accessToken;
+      _gdriveAutoSyncEnabled = true;
+      toast('Signed in to Google Drive', 'success');
+      callback();
+    } catch (e) {
+      toast('Google sign-in failed: ' + (e.message || e), 'error');
+    }
+    return;
+  }
+
+  // Web: use Google Identity Services
   _driveCallback = callback;
-  if (!_initDriveClient()) return;
+  if (!_initDriveClient()) {
+    toast('Loading Google services…', 'info');
+    const loaded = await _ensureGisLoaded();
+    if (!loaded) {
+      toast('Could not load Google Identity Services', 'error');
+      return;
+    }
+    if (!_initDriveClient()) return;
+  }
   _driveTokenClient.requestAccessToken({ prompt: _driveToken ? '' : '' });
 }
 
@@ -153,7 +211,7 @@ function _saveDriveMap(projectId, map) {
 function _stripPhotoData(project) {
   const p = { ...project };
   if (p.photos) p.photos = p.photos.map(({ data, ...rest }) => rest);
-  if (p.siteMap) { const { data, ...sm } = p.siteMap; p.siteMap = sm; }
+  if (p.siteMapFloors) p.siteMapFloors = p.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
   return p;
 }
 
@@ -341,9 +399,13 @@ async function gdriveSave() {
 
       // ── Upload photos as individual binary files ──
       const allPhotos = (p.photos || []).filter(ph => ph.id);
-      const smData = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
-      const hasSiteMap = !!smData;
-      const totalMedia = allPhotos.length + (hasSiteMap ? 1 : 0);
+      const floors = p.siteMapFloors || [];
+      const floorImages = [];
+      for (const f of floors) {
+        const d = f._data || await _lazyGetPhotoData('sitemap_' + p.id + '_' + f.id);
+        if (d) floorImages.push({ floor: f, data: d });
+      }
+      const totalMedia = allPhotos.length + floorImages.length;
       const driveMap = _getDriveMap(p.id);
       let mediaFolderId = driveMap.folderId || null;
 
@@ -372,21 +434,23 @@ async function gdriveSave() {
           processed++;
         }
 
-        // Upload site map if new/changed
-        if (hasSiteMap) {
-          const smEntry = driveMap._siteMap;
+        // Upload floor map images
+        for (const { floor: fl, data: smData } of floorImages) {
+          const smKey = '_siteMap_' + fl.id;
+          const smEntry = driveMap[smKey];
           if (!smEntry?.driveFileId || smEntry.dataLen !== smData.length) {
-            _driveProgressUpdate(66, 'Uploading site map…');
+            _driveProgressUpdate(66, `Uploading floor map: ${fl.name}…`);
             const blob = _dataUrlToBlob(smData);
             const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-            const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
-            driveMap._siteMap = { driveFileId: did, dataLen: smData.length };
+            const did = await _driveUploadBlob(mediaFolderId, 'sitemap_' + fl.id + '.' + ext, blob, smEntry?.driveFileId);
+            driveMap[smKey] = { driveFileId: did, dataLen: smData.length };
           }
         }
 
         // Delete Drive files for locally-deleted photos
+        const floorKeys = new Set(floors.map(f => '_siteMap_' + f.id));
         for (const [key, entry] of Object.entries(driveMap)) {
-          if (key === 'folderId' || key === '_siteMap') continue;
+          if (key === 'folderId' || key === '_siteMap' || key.startsWith('_siteMap_')) { if (key.startsWith('_siteMap_') && !floorKeys.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; } continue; }
           if (!localIds.has(key) && entry.driveFileId) {
             await _driveDeleteFile(entry.driveFileId);
             delete driveMap[key];
@@ -452,11 +516,12 @@ async function gdriveSaveAll() {
         try {
           // Upload photos as separate binary files
           const allPh = (p.photos || []).filter(ph => ph.id);
-          const smD = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
-          const hasSM = !!smD;
+          const flrs = p.siteMapFloors || [];
+          const flrImgs = [];
+          for (const f of flrs) { const d = f._data || await _lazyGetPhotoData('sitemap_' + p.id + '_' + f.id); if (d) flrImgs.push({ floor: f, data: d }); }
           const driveMap = _getDriveMap(p.id);
           let mediaFolderId = driveMap.folderId || null;
-          if (allPh.length > 0 || hasSM) {
+          if (allPh.length > 0 || flrImgs.length > 0) {
             const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
             if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
             driveMap.folderId = mediaFolderId;
@@ -474,17 +539,19 @@ async function gdriveSaveAll() {
               driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
               if (!ph.dataLen) ph.dataLen = phData.length;
             }
-            if (hasSM) {
-              const smEntry = driveMap._siteMap;
+            for (const { floor: fl, data: smD } of flrImgs) {
+              const smKey = '_siteMap_' + fl.id;
+              const smEntry = driveMap[smKey];
               if (!smEntry?.driveFileId || smEntry.dataLen !== smD.length) {
                 const blob = _dataUrlToBlob(smD);
                 const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-                const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
-                driveMap._siteMap = { driveFileId: did, dataLen: smD.length };
+                const did = await _driveUploadBlob(mediaFolderId, 'sitemap_' + fl.id + '.' + ext, blob, smEntry?.driveFileId);
+                driveMap[smKey] = { driveFileId: did, dataLen: smD.length };
               }
             }
+            const floorKeys = new Set(flrs.map(f => '_siteMap_' + f.id));
             for (const [key, entry] of Object.entries(driveMap)) {
-              if (key === 'folderId' || key === '_siteMap') continue;
+              if (key === 'folderId' || key === '_siteMap' || key.startsWith('_siteMap_')) { if (key.startsWith('_siteMap_') && !floorKeys.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; } continue; }
               if (!localIds.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; }
             }
             _saveDriveMap(p.id, driveMap);
@@ -617,8 +684,9 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
   const fileMap = {};
   files.forEach(f => { fileMap[f.name.replace(/\.[^.]+$/, '')] = f; });
   const photos = (project.photos || []).filter(ph => !ph.data && fileMap[ph.id]);
-  const hasSiteMap = project.siteMap && !project.siteMap.data && fileMap['sitemap'];
-  const total = photos.length + (hasSiteMap ? 1 : 0);
+  const floors = project.siteMapFloors || [];
+  const floorFiles = floors.filter(f => fileMap['sitemap_' + f.id] || (project._smLegacyFloorId === f.id && fileMap['sitemap']));
+  const total = photos.length + floorFiles.length;
   if (total === 0) return;
 
   let done = 0;
@@ -646,19 +714,18 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
   }
   await Promise.all(Array(Math.min(4, queue.length || 1)).fill(null).map(() => worker()));
 
-  // Site map
-  if (hasSiteMap) {
+  // Floor maps
+  for (const fl of floorFiles) {
     try {
-      const f = fileMap['sitemap'];
+      const f = fileMap['sitemap_' + fl.id] || fileMap['sitemap'];
       const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
       const blob = await r.blob();
       const smDataUrl = await _blobToDataUrl(blob);
-      await _idbSavePhotoData('sitemap_' + project.id, smDataUrl);
-      project.siteMap.data = null;
-      driveMap._siteMap = { driveFileId: f.id, dataLen: smDataUrl.length };
+      await _idbSavePhotoData('sitemap_' + project.id + '_' + fl.id, smDataUrl);
+      driveMap['_siteMap_' + fl.id] = { driveFileId: f.id, dataLen: smDataUrl.length };
     } catch(e) {}
     done++;
-    if (onProgress) onProgress(100, 'Photos downloaded');
+    if (onProgress) onProgress((done / total) * 100, `Downloading floor map ${done} of ${total}…`);
   }
   _saveDriveMap(project.id, driveMap);
 }
@@ -669,8 +736,9 @@ async function _indexDrivePhotos(project, mediaFolderId) {
   const driveMap = { folderId: mediaFolderId };
   for (const f of files) {
     const name = f.name.replace(/\.[^.]+$/, '');
-    if (name === 'sitemap') {
-      driveMap._siteMap = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
+    if (name === 'sitemap' || name.startsWith('sitemap_')) {
+      const smKey = name === 'sitemap' ? '_siteMap' : '_siteMap_' + name.slice(8);
+      driveMap[smKey] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
     } else {
       driveMap[name] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
     }
@@ -717,9 +785,8 @@ async function openDriveProject(driveFileId) {
         ph.data = null;
       }
     }
-    if (p.siteMap?.data) {
-      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-      p.siteMap.data = null;
+    for (const f of (p.siteMapFloors || [])) {
+      if (f.data || f._data) { await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, f.data || f._data); delete f.data; delete f._data; }
     }
     if (p.cableRunMap?.image) {
       await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
@@ -795,9 +862,8 @@ async function gdriveImportFile(fileId, fileName) {
         ph.data = null;
       }
     }
-    if (p.siteMap?.data) {
-      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-      p.siteMap.data = null;
+    for (const f of (p.siteMapFloors || [])) {
+      if (f.data || f._data) { await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, f.data || f._data); delete f.data; delete f._data; }
     }
     if (p.cableRunMap?.image) {
       await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
@@ -841,59 +907,99 @@ async function gdriveImportFile(fileId, fileName) {
 //  BACKGROUND AUTO-SYNC TO GOOGLE DRIVE
 // ═══════════════════════════════════════════
 // After the user does at least one manual Google Drive save (which grants an OAuth token),
-// the app will silently auto-sync every 5 minutes and when the tab/app goes to background.
+// the app will silently auto-sync 15s after the last change. Photos upload 3-at-a-time
+// in parallel for speed. A small indicator shows sync status — no blocking modals.
 
 let _autoSyncDirty = false;
 let _autoSyncTimer = null;
-const AUTO_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
+let _autoSyncing = false;
+let _gdriveAutoSyncEnabled = false;
 
-// Mark the project as needing a sync whenever local data is saved
-const _origSave = typeof save === 'function' ? save : null;
-if (_origSave) {
-  window.save = function() {
-    _origSave.apply(this, arguments);
-    _autoSyncDirty = true;
-  };
+// Called from save() in core.js — debounces a background sync 15s after last change
+function _gdriveQueueAutoSync() {
+  if (!_driveToken || !navigator.onLine) return;
+  _autoSyncDirty = true;
+  clearTimeout(_autoSyncTimer);
+  _autoSyncTimer = setTimeout(_gdriveAutoSync, 15000);
 }
 
-// Quiet background sync — no modals, no progress UI
-async function _autoSyncToDrive() {
-  if (!_autoSyncDirty || !_driveToken || !navigator.onLine) return;
+async function _gdriveAutoSync() {
+  if (_autoSyncing || !_autoSyncDirty || !_driveToken || !navigator.onLine) return;
   const p = getProject();
   if (!p) return;
+  _autoSyncing = true;
+  _autoSyncDirty = false;
+  _showDriveSyncStatus('syncing');
+
   try {
     const folderId = await _getOrCreateDriveFolder();
-    const allPh2 = (p.photos || []).filter(ph => ph.id);
-    const smD2 = p.siteMap?.data || await _lazyGetPhotoData('sitemap_' + p.id);
-    const hasSM2 = !!smD2;
+    const allPhotos = (p.photos || []).filter(ph => ph.id);
+    const floors = p.siteMapFloors || [];
+    const floorImgs = [];
+    for (const f of floors) { const d = f._data || await _lazyGetPhotoData('sitemap_' + p.id + '_' + f.id); if (d) floorImgs.push({ floor: f, data: d }); }
     const driveMap = _getDriveMap(p.id);
     let mediaFolderId = driveMap.folderId || null;
-    if (allPh2.length > 0 || hasSM2) {
+
+    if (allPhotos.length > 0 || floorImgs.length > 0) {
       const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
       if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
       driveMap.folderId = mediaFolderId;
-      for (const ph of allPh2) {
+
+      // Find photos that need uploading
+      const toUpload = allPhotos.filter(ph => {
         const entry = driveMap[ph.id];
         const len = ph.dataLen || 0;
-        if (entry?.driveFileId && entry.dataLen === len && len > 0) continue;
-        const phData = ph.data || await _lazyGetPhotoData(ph.id);
-        if (!phData) continue;
-        const blob = _dataUrlToBlob(phData);
-        const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-        const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
-        driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
+        return !(entry?.driveFileId && entry.dataLen === len && len > 0);
+      });
+
+      // Upload in parallel batches of 3 for speed
+      const BATCH = 3;
+      let uploaded = 0;
+      for (let i = 0; i < toUpload.length; i += BATCH) {
+        const batch = toUpload.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (ph) => {
+          try {
+            const phData = ph.data || await _lazyGetPhotoData(ph.id);
+            if (!phData) return;
+            const blob = _dataUrlToBlob(phData);
+            const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+            const entry = driveMap[ph.id];
+            const did = await _driveUploadBlob(mediaFolderId, ph.id + '.' + ext, blob, entry?.driveFileId);
+            driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
+            if (!ph.dataLen) ph.dataLen = phData.length;
+            uploaded++;
+            _showDriveSyncStatus('syncing', `${uploaded}/${toUpload.length} photos`);
+          } catch (e) { console.warn('[AutoSync] Photo upload failed:', ph.id, e.message); }
+        }));
       }
-      if (hasSM2) {
-        const smEntry = driveMap._siteMap;
-        if (!smEntry?.driveFileId || smEntry.dataLen !== smD2.length) {
-          const blob = _dataUrlToBlob(smD2);
+
+      // Upload floor map images if new/changed
+      for (const { floor: fl, data: smData } of floorImgs) {
+        const smKey = '_siteMap_' + fl.id;
+        const smEntry = driveMap[smKey];
+        if (!smEntry?.driveFileId || smEntry.dataLen !== smData.length) {
+          const blob = _dataUrlToBlob(smData);
           const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-          const did = await _driveUploadBlob(mediaFolderId, 'sitemap.' + ext, blob, smEntry?.driveFileId);
-          driveMap._siteMap = { driveFileId: did, dataLen: smD2.length };
+          const did = await _driveUploadBlob(mediaFolderId, 'sitemap_' + fl.id + '.' + ext, blob, smEntry?.driveFileId);
+          driveMap[smKey] = { driveFileId: did, dataLen: smData.length };
+        }
+      }
+
+      // Clean up deleted photos from Drive
+      const localIds = new Set(allPhotos.map(ph => ph.id));
+      const floorKeys = new Set(floors.map(f => '_siteMap_' + f.id));
+      for (const [key, entry] of Object.entries(driveMap)) {
+        if (key === 'folderId' || key === '_siteMap' || key.startsWith('_siteMap_')) { if (key.startsWith('_siteMap_') && !floorKeys.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; } continue; }
+        if (!localIds.has(key) && entry.driveFileId) {
+          await _driveDeleteFile(entry.driveFileId);
+          delete driveMap[key];
         }
       }
       _saveDriveMap(p.id, driveMap);
     }
+
+    // Save metadata JSON
+    _showDriveSyncStatus('syncing', 'metadata');
     const stripped = _stripPhotoData(p);
     const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
     const content = JSON.stringify(bundle);
@@ -919,23 +1025,57 @@ async function _autoSyncToDrive() {
     }
     await _gdriveSaveManufacturers(folderId);
     await _gdriveSaveFolders(folderId);
-    _autoSyncDirty = false;
-    console.log('[AutoSync] Synced to Google Drive');
-  } catch (e) {
-    console.warn('[AutoSync] Failed:', e.message);
+
+    _showDriveSyncStatus('done');
+
+    // If more changes happened during sync, queue another round
+    if (_autoSyncDirty) _autoSyncTimer = setTimeout(_gdriveAutoSync, 15000);
+  } catch (err) {
+    console.warn('[AutoSync] Failed:', err.message);
+    if (err.message?.includes('Auth expired')) {
+      _driveToken = null;
+      _showDriveSyncStatus('auth');
+    } else {
+      _showDriveSyncStatus('error');
+      _autoSyncDirty = true;
+      _autoSyncTimer = setTimeout(_gdriveAutoSync, 120000); // retry in 2 min
+    }
+  } finally {
+    _autoSyncing = false;
   }
 }
 
-// Start the periodic auto-sync timer
-function _startAutoSync() {
-  if (_autoSyncTimer) return;
-  _autoSyncTimer = setInterval(_autoSyncToDrive, AUTO_SYNC_INTERVAL);
+function _showDriveSyncStatus(status, detail) {
+  let el = document.getElementById('gdrive-sync-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'gdrive-sync-indicator';
+    el.style.cssText = 'position:fixed;bottom:10px;right:10px;font-size:11px;font-family:var(--mono);padding:5px 12px;border-radius:5px;z-index:100;transition:opacity .4s;pointer-events:none;border:1px solid';
+    document.body.appendChild(el);
+  }
+  el.style.opacity = '1';
+  el.style.pointerEvents = 'none';
+  if (status === 'syncing') {
+    el.textContent = '☁ Syncing' + (detail ? ` (${detail})` : '...');
+    el.style.background = 'rgba(66,133,244,.12)'; el.style.color = '#4285f4'; el.style.borderColor = 'rgba(66,133,244,.3)';
+  } else if (status === 'done') {
+    el.textContent = '☁ Synced';
+    el.style.background = 'rgba(0,200,122,.12)'; el.style.color = '#00c87a'; el.style.borderColor = 'rgba(0,200,122,.3)';
+    setTimeout(() => { el.style.opacity = '0'; }, 3000);
+  } else if (status === 'error') {
+    el.textContent = '☁ Sync error — will retry';
+    el.style.background = 'rgba(255,77,79,.12)'; el.style.color = '#ff4d4f'; el.style.borderColor = 'rgba(255,77,79,.3)';
+    setTimeout(() => { el.style.opacity = '0'; }, 5000);
+  } else if (status === 'auth') {
+    el.textContent = '☁ Token expired — save to Drive to re-auth';
+    el.style.background = 'rgba(255,170,0,.12)'; el.style.color = '#ffaa00'; el.style.borderColor = 'rgba(255,170,0,.3)';
+    el.style.pointerEvents = 'auto'; el.style.cursor = 'pointer';
+    el.onclick = () => { el.style.opacity = '0'; el.style.pointerEvents = 'none'; };
+    setTimeout(() => { el.style.opacity = '0'; el.style.pointerEvents = 'none'; }, 8000);
+  }
 }
 
-// Sync when user leaves the app / switches tabs
+// Also sync when user leaves the app / switches tabs
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') _autoSyncToDrive();
+  if (document.visibilityState === 'hidden' && _autoSyncDirty && _driveToken) _gdriveAutoSync();
 });
-
-// Start timer on load
-_startAutoSync();

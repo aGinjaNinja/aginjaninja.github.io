@@ -296,7 +296,7 @@ async function createProject() {
     fcNodePositions: {},
     photos: [], photoFolders: [],
     checklist: getDefaultChecklist(), timeLog: [],
-    cableRuns: [], locations: [], siteMap: { data: null, markers: [], cableLines: [] }
+    cableRuns: [], locations: [], siteMapFloors: []
   };
   state.projects.push(p);
   await _idbSaveProject(p);
@@ -342,5 +342,5 @@ function openProject(id) {
   state.currentProjectId = id;
   sessionStorage.setItem('netrack_current_project', id);
   try { localStorage.setItem('netrack_current_project', id); } catch(e) {}
-  window.location.href = 'dashboard.html';
+  window.location.href = 'app.html#dashboard';
 }

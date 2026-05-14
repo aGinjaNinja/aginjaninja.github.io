@@ -1,12 +1,16 @@
+function _devicesMoreMenu() {
+  return '<div class="topbar-overflow-item" onclick="addPatchPanel();document.getElementById(\'topbar-more-menu\')?.remove()">⊞ New Patch Panel</div>' +
+    '<div class="topbar-overflow-item" onclick="addFiberEnclosure();document.getElementById(\'topbar-more-menu\')?.remove()">⬡ New Fiber Enclosure</div>' +
+    '<div class="topbar-overflow-item" onclick="lookupMacManufacturers();document.getElementById(\'topbar-more-menu\')?.remove()">⊙ Lookup Manufacturers</div>';
+}
+
 function renderDevices(preserveSearch) {
   if (!state.selectedDeviceIds) state.selectedDeviceIds = new Set();
   const va = document.getElementById('view-area');
   const savedScroll = va ? va.scrollTop : 0;
   setTopbarActions(`
-    <button class="btn btn-ghost btn-sm" onclick="lookupMacManufacturers()" title="Look up missing manufacturers via MAC address">⊙ Lookup Manufacturers</button>
-    <button class="btn btn-ghost btn-sm" onclick="addPatchPanel()">⊞ New Patch Panel</button>
-    <button class="btn btn-ghost btn-sm" onclick="addFiberEnclosure()">⬡ New Fiber Enclosure</button>
-    <button class="btn btn-primary btn-sm" onclick="addDevice()">+ Add Device</button>`);
+    <button class="btn btn-primary btn-sm" onclick="addDevice()">+ Add Device</button>
+    <button class="btn btn-ghost btn-sm" onclick="openTopbarMore(_devicesMoreMenu())">More ▾</button>`);
   const p = getProject();
   const filter = state.deviceFilter || 'all';
   const search = (state.deviceSearch || '').toLowerCase();

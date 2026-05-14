@@ -161,9 +161,15 @@ function migrateProject(p) {
   if (!p.cableRunMap.symbols) p.cableRunMap.symbols = [];
   // Feature 12: Locations
   if (!p.locations) p.locations = [];
-  // Feature 13: Site Map
-  if (!p.siteMap) p.siteMap = { data: null, markers: [], cableLines: [] };
-  if (!p.siteMap.cableLines) p.siteMap.cableLines = [];
+  // Feature 13: Site Map (multi-floor)
+  if (p.siteMap && !p.siteMapFloors) {
+    const floorId = genId();
+    p.siteMapFloors = [{ id: floorId, name: 'Floor 1', markers: p.siteMap.markers || [], cableLines: p.siteMap.cableLines || [] }];
+    p._smLegacyFloorId = floorId;
+    delete p.siteMap;
+  }
+  if (!p.siteMapFloors) p.siteMapFloors = [];
+  p.siteMapFloors.forEach(f => { if (!f.markers) f.markers = []; if (!f.cableLines) f.cableLines = []; });
   if (!p.customTemplates) p.customTemplates = [];
   if (p.folderId === undefined) p.folderId = '';
   p.racks.forEach(r => { if (!r.uDirection) r.uDirection = 'desc'; });
@@ -254,7 +260,7 @@ async function _idbSaveProject(project) {
   // Strip heavy binary data — photos stored in separate 'photoData' store
   const lite = { ...project };
   if (lite.photos) lite.photos = lite.photos.map(ph => ph.data ? { ...ph, data: null } : ph);
-  if (lite.siteMap?.data) lite.siteMap = { ...lite.siteMap, data: null };
+  if (lite.siteMapFloors) lite.siteMapFloors = lite.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
   if (lite.cableRunMap?.image) lite.cableRunMap = { ...lite.cableRunMap, image: null };
   return new Promise((res, rej) => {
     const tx = db.transaction('projects', 'readwrite');
@@ -334,7 +340,12 @@ async function _lazyGetPhotoData(id) {
   // Try fetching from Drive if signed in
   if (typeof _driveToken === 'undefined' || !_driveToken || typeof _driveFetch !== 'function' || typeof _getDriveMap !== 'function') return null;
   let projectId, mapKey;
-  if (id.startsWith('sitemap_')) { projectId = id.slice(8); mapKey = '_siteMap'; }
+  if (id.startsWith('sitemap_')) {
+    const rest = id.slice(8);
+    const secondId = rest.indexOf('_id_', 3);
+    if (secondId > 0) { projectId = rest.slice(0, secondId); mapKey = '_siteMap_' + rest.slice(secondId + 1); }
+    else { projectId = rest; mapKey = '_siteMap'; }
+  }
   else if (id.startsWith('cablemap_')) { projectId = id.slice(9); mapKey = '_cableMap'; }
   else { const p = getProject(); if (!p) return null; projectId = p.id; mapKey = id; }
   const driveMap = _getDriveMap(projectId);
@@ -389,6 +400,9 @@ function save() {
     const p = getProject();
     if (p) backupProjectToAgent(p);
   }, 1500);
+
+  // Queue background Google Drive sync (15s debounce, parallel uploads)
+  if (typeof _gdriveQueueAutoSync === 'function') _gdriveQueueAutoSync();
 }
 
 function toggleSidebarDropdown(id) {
@@ -443,10 +457,15 @@ async function _buildProjectBlob(p) {
         parts.push(JSON.stringify(ph));
       }
       parts.push(']');
-    } else if (k === 'siteMap' && p.siteMap) {
-      const sm = { ...p.siteMap };
-      if (!sm.data) sm.data = await _lazyGetPhotoData('sitemap_' + p.id);
-      parts.push(JSON.stringify(sm));
+    } else if (k === 'siteMapFloors' && p.siteMapFloors) {
+      const floors = [];
+      for (const f of p.siteMapFloors) {
+        const fc = { ...f };
+        delete fc._data;
+        fc.data = await _lazyGetPhotoData('sitemap_' + p.id + '_' + f.id) || null;
+        floors.push(fc);
+      }
+      parts.push(JSON.stringify(floors));
     } else if (k === 'cableRunMap' && p.cableRunMap) {
       const cr = { ...p.cableRunMap };
       if (!cr.image) cr.image = await _lazyGetPhotoData('cablemap_' + p.id);
@@ -486,10 +505,8 @@ async function _buildProjectZip(p) {
         delete copy._editorSrc;
         return copy;
       });
-    } else if (k === 'siteMap' && p.siteMap) {
-      const sm = { ...p.siteMap };
-      delete sm.data;
-      proj.siteMap = sm;
+    } else if (k === 'siteMapFloors' && p.siteMapFloors) {
+      proj.siteMapFloors = p.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
     } else if (k === 'cableRunMap' && p.cableRunMap) {
       const cr = { ...p.cableRunMap };
       delete cr.image;
@@ -513,10 +530,10 @@ async function _buildProjectZip(p) {
     if (data) zip.file('media/photos/' + ph.id, data);
   }
 
-  // Site map
-  if (p.siteMap) {
-    const smData = p.siteMap.data || await _lazyGetPhotoData('sitemap_' + p.id);
-    if (smData) zip.file('media/sitemap', smData);
+  // Site map floors
+  for (const f of (p.siteMapFloors || [])) {
+    const smData = f._data || await _lazyGetPhotoData('sitemap_' + p.id + '_' + f.id);
+    if (smData) zip.file('media/sitemap_' + f.id, smData);
   }
 
   // Cable run map
@@ -632,10 +649,12 @@ async function _migratePhotosToSeparateStore() {
         migrated = true;
       }
     }
-    if (p.siteMap?.data) {
-      await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-      p.siteMap.data = null;
-      migrated = true;
+    for (const f of (p.siteMapFloors || [])) {
+      if (f._data || f.data) {
+        await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, f._data || f.data);
+        delete f._data; delete f.data;
+        migrated = true;
+      }
     }
     if (p.cableRunMap?.image) {
       await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
@@ -845,7 +864,7 @@ async function backupProjectToAgent(p, silent = true) {
       // Strip photo data for auto-save — full photos are synced via manual Drive save
       const lightP = { ...p };
       if (lightP.photos) lightP.photos = lightP.photos.map(({ data, ...rest }) => rest);
-      if (lightP.siteMap) { const { data, ...sm } = lightP.siteMap; lightP.siteMap = sm; }
+      if (lightP.siteMapFloors) lightP.siteMapFloors = lightP.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
       const lightBundle = { _netrack_version: 2, typeColors: state.typeColors, globalVendors: state.globalVendors || [], project: lightP };
       await fetch(cfg.gdriveUrl, {
         method: 'POST',
@@ -1432,11 +1451,13 @@ async function handleImport(e) {
         delete ph._editorSrc;
       }
 
-      // Site map
-      const smFile = zip.file('media/sitemap');
-      if (smFile && p.siteMap) {
-        await _idbSavePhotoData('sitemap_' + p.id, await smFile.async('text'));
-        p.siteMap.data = null;
+      // Site map floors
+      for (const f of (p.siteMapFloors || [])) {
+        const smFile = zip.file('media/sitemap_' + f.id) || (p._smLegacyFloorId === f.id ? zip.file('media/sitemap') : null);
+        if (smFile) {
+          await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, await smFile.async('text'));
+        }
+        delete f._data; delete f.data;
       }
 
       // Cable run map
@@ -1492,15 +1513,18 @@ async function handleImport(e) {
         delete ph._editorSrc;
       }
 
-      // Site map
-      if (useStreaming && p.siteMap?.data?.startsWith?.('_import_temp_')) {
-        const d = await _idbGetPhotoData(p.siteMap.data);
-        if (d) await _idbSavePhotoData('sitemap_' + p.id, d);
-        await _idbDeletePhotoData(p.siteMap.data);
-        p.siteMap.data = null;
-      } else if (p.siteMap?.data) {
-        await _idbSavePhotoData('sitemap_' + p.id, p.siteMap.data);
-        p.siteMap.data = null;
+      // Site map floors
+      for (const f of (p.siteMapFloors || [])) {
+        if (useStreaming && f.data?.startsWith?.('_import_temp_')) {
+          const d = await _idbGetPhotoData(f.data);
+          if (d) await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, d);
+          await _idbDeletePhotoData(f.data);
+          f.data = null;
+        } else if (f.data) {
+          await _idbSavePhotoData('sitemap_' + p.id + '_' + f.id, f.data);
+          f.data = null;
+        }
+        delete f._data;
       }
 
       // Cable run map
