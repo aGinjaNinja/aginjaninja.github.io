@@ -585,7 +585,65 @@
   .sm-idf-sidebar-item { display: flex; align-items: center; gap: 7px; padding: 6px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 5px; margin-bottom: 4px; user-select: none; }
   .sm-idf-sidebar-item:not(.placed):hover { background: var(--card2); border-color: var(--accent); }
   .sm-idf-sidebar-item.placed { opacity: 0.6; }
+
+  /* ─── FLOOR TABS ─── */
+  .sm-floor-tabs { display: flex; gap: 2px; padding: 0 0 8px; overflow-x: auto; flex-wrap: nowrap; }
+  .sm-floor-tab { padding: 6px 14px; font-size: 11px; font-family: var(--mono); background: var(--card); border: 1px solid var(--border); border-radius: 5px 5px 0 0; color: var(--text2); cursor: pointer; white-space: nowrap; transition: all .15s; display: flex; align-items: center; gap: 6px; }
+  .sm-floor-tab:hover { background: var(--card2); color: var(--text); }
+  .sm-floor-tab.active { background: var(--card2); border-color: var(--accent); color: var(--accent); }
+  .sm-floor-tab-x { font-size: 10px; color: var(--text3); margin-left: 2px; line-height: 1; }
+  .sm-floor-tab-x:hover { color: var(--red); }
+  .sm-floor-add, .sm-floor-rename { font-size: 14px; padding: 4px 10px; color: var(--text3); }
+  .sm-floor-add:hover, .sm-floor-rename:hover { color: var(--accent); }
+
   /* ─── AMBER TOAST ─── */
   #toast.warning { border-color: var(--amber); color: var(--amber); }
   /* ─── TIMER TOPBAR ─── */
   #active-timer-display { font-family: var(--mono); font-size: 12px; color: var(--amber); background: rgba(255,170,0,.1); border: 1px solid rgba(255,170,0,.3); border-radius: 5px; padding: 3px 10px; cursor: pointer; }
+
+  /* ═══ SPA VIEW TRANSITIONS ═══ */
+  @keyframes viewFadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .view-enter { animation: viewFadeIn 0.18s ease-out; }
+
+  /* ═══ COLLAPSIBLE NAV SECTIONS ═══ */
+  .nav-section-hdr { cursor: pointer; display: flex; align-items: center; gap: 4px; user-select: none; }
+  .nav-section-hdr:hover { color: var(--accent); }
+  .nav-section-arrow { font-size: 9px; width: 10px; display: inline-block; color: var(--text3); transition: color .15s; }
+  .nav-section-hdr:hover .nav-section-arrow { color: var(--accent); }
+  .nav-section-items { overflow: hidden; max-height: 400px; transition: max-height 0.25s ease, opacity 0.2s ease; opacity: 1; }
+  .nav-section-items.collapsed { max-height: 0; opacity: 0; pointer-events: none; }
+
+  /* ═══ TOPBAR OVERFLOW MENU ═══ */
+  .topbar-overflow-menu {
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: 400;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 4px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .topbar-overflow-item {
+    padding: 8px 12px; border-radius: 5px; cursor: pointer; font-size: 12px;
+    color: var(--text); transition: background 0.12s;
+  }
+  .topbar-overflow-item:hover { background: var(--card2); }
+
+  /* ═══ PHOTO CARD ACTION BUTTONS ═══ */
+  .photo-card-actions {
+    position: absolute; top: 6px; left: 6px; display: none; gap: 3px; z-index: 2;
+  }
+  .photo-card:hover .photo-card-actions { display: flex; }
+  .photo-card-btn {
+    background: rgba(0,0,0,.7); border: 1px solid var(--border2); border-radius: 4px;
+    color: var(--text2); cursor: pointer; width: 26px; height: 26px; font-size: 12px;
+    display: flex; align-items: center; justify-content: center; transition: all .15s;
+    backdrop-filter: blur(4px);
+  }
+  .photo-card-btn:hover { background: rgba(0,200,255,.2); border-color: var(--accent); color: var(--accent); }
+
+  /* ═══ PHOTO VIEWER DOWNLOAD BUTTONS ═══ */
+  .pv-dl-btn { color: #fff !important; border-color: rgba(255,255,255,.3) !important; }
+  .pv-dl-btn:hover { background: rgba(0,200,255,.2) !important; border-color: var(--accent) !important; color: var(--accent) !important; }
+
+  /* ═══ TOPBAR ACTIONS — keep relative for overflow menu ═══ */
+  #topbar-actions { position: relative; }
