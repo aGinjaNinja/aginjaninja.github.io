@@ -211,17 +211,22 @@ async function renderCableRunMap() {
           <div class="cr-toolbar-section">Symbols</div>
           ${paletteHtml}
           ${_crPlacingSymbol ? `<button class="btn btn-danger btn-sm" style="width:100%;font-size:10px;margin-top:2px" onclick="crCancelSymbol()">✕ Cancel Placement</button>` : ''}
-        ` : ''}
-        <div class="cr-toolbar-section">Paths (${paths.length})</div>
-        ${pathsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">${canEdit?'Draw a path on the map':'No paths yet'}</div>`}
-        <div class="cr-toolbar-section">Symbols (${symbols.length})</div>
-        ${symbolsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">${canEdit?'Select a symbol above, then click the map':'No symbols yet'}</div>`}
-        <div style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
-          <label class="btn btn-ghost btn-sm" style="width:100%;font-size:10px;cursor:pointer">
-            🔄 Replace Image
-            <input type="file" accept="image/*" style="display:none" onchange="crUploadImage(event)">
-          </label>
-        </div>
+          <div class="cr-toolbar-section">Paths (${paths.length})</div>
+          ${pathsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">Draw a path on the map</div>`}
+          <div class="cr-toolbar-section">Placed Symbols (${symbols.length})</div>
+          ${symbolsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">Select a symbol above, then click the map</div>`}
+          <div style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
+            <label class="btn btn-ghost btn-sm" style="width:100%;font-size:10px;cursor:pointer">
+              🔄 Replace Image
+              <input type="file" accept="image/*" style="display:none" onchange="crUploadImage(event)">
+            </label>
+          </div>
+        ` : `
+          <div style="padding:8px 0;font-size:12px;color:var(--text2)">
+            ${paths.length} path${paths.length!==1?'s':''} · ${symbols.length} symbol${symbols.length!==1?'s':''}
+          </div>
+          <div style="font-size:11px;color:var(--text3)">Enable Edit Mode to modify paths and symbols.</div>
+        `}
       </div>
       <div class="cr-map-canvas ${canEdit?'edit-mode':''}" id="cr-canvas"
         style="cursor:${cursor};touch-action:none"
