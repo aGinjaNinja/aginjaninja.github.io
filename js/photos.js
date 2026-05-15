@@ -527,7 +527,12 @@ async function uploadPhotos(e) {
     } catch(err) { console.error('Photo add error:', err); }
   }
 
-  if (added > 0) { save(); renderPhotos(); toast(`Added ${added} photo${added>1?'s':''}`, 'success'); }
+  if (added > 0) {
+    save();
+    if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
+    renderPhotos();
+    toast(`Added ${added} photo${added>1?'s':''}`, 'success');
+  }
   else { toast('Could not add photos', 'error'); }
   try { input.value = ''; } catch(e) {}
 }
@@ -1725,6 +1730,7 @@ async function uploadPhotosFromZip(e) {
     if (added > 0) {
       logChange(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`);
       save();
+      if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
       renderPhotos();
       toast(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`, 'success');
     } else {

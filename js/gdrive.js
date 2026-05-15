@@ -207,12 +207,43 @@ function _saveDriveMap(projectId, map) {
   try { localStorage.setItem('netrack_drivemap_' + projectId, JSON.stringify(map)); } catch(e) {}
 }
 
-// Strip photo binary data from a project for metadata-only JSON
-function _stripPhotoData(project) {
+// Strip photo binary data from a project for metadata-only JSON.
+// Adds _driveSynced per photo so the backup always shows which photos
+// exist but haven't been uploaded yet (the "manifest").
+function _stripPhotoData(project, includeSyncStatus) {
   const p = { ...project };
-  if (p.photos) p.photos = p.photos.map(({ data, ...rest }) => rest);
+  if (p.photos) {
+    const driveMap = includeSyncStatus ? _getDriveMap(project.id) : null;
+    p.photos = p.photos.map(({ data, _editorSrc, ...rest }) => {
+      const ph = { ...rest };
+      if (driveMap) {
+        const entry = driveMap[ph.id];
+        const len = ph.dataLen || 0;
+        ph._driveSynced = !!(entry?.driveFileId && entry.dataLen === len && len > 0);
+      }
+      return ph;
+    });
+  }
   if (p.siteMapFloors) p.siteMapFloors = p.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
+  if (p.cableRunMap?.image) p.cableRunMap = { ...p.cableRunMap, image: null };
   return p;
+}
+
+// Build the metadata bundle with photo manifest (sync status per photo)
+function _buildMetadataBundle(project, mediaFolderId) {
+  const stripped = _stripPhotoData(project, true);
+  const totalPhotos = (stripped.photos || []).length;
+  const syncedPhotos = (stripped.photos || []).filter(ph => ph._driveSynced).length;
+  const pendingPhotos = totalPhotos - syncedPhotos;
+  return {
+    _netrack_version: 2,
+    _separateMedia: true,
+    _mediaFolderId: mediaFolderId,
+    _photoManifest: { total: totalPhotos, synced: syncedPhotos, pending: pendingPhotos, lastSync: new Date().toISOString() },
+    typeColors: state.typeColors || {},
+    globalVendors: state.globalVendors || [],
+    project: stripped
+  };
 }
 
 // ── Manufacturer list save/load ──────────────────────────────────────────────
@@ -459,33 +490,10 @@ async function gdriveSave() {
         _saveDriveMap(p.id, driveMap);
       }
 
-      _driveProgressUpdate(70, 'Saving project metadata…');
+      _driveProgressUpdate(70, 'Saving project metadata with photo manifest…');
 
-      // ── Save metadata JSON (without photo data — photos are separate files) ──
-      const stripped = _stripPhotoData(p);
-      const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
-      const content = JSON.stringify(bundle);
-      const desc = _projectDescription(p);
-      const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
-      const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
-      const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-      const { files } = await search.json();
-      _driveProgressUpdate(80);
-      if (files?.length) {
-        await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
-        });
-        await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: desc })
-        });
-      } else {
-        const boundary = 'nrm' + Date.now();
-        const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', description: desc });
-        const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
-        await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-          method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
-        });
-      }
+      // ── Save metadata JSON with photo manifest (sync status per photo) ──
+      await _gdriveSaveMetadata(p, folderId, mediaFolderId);
 
       _driveProgressUpdate(85, 'Saving manufacturers & folders…');
       await _gdriveSaveManufacturers(folderId);
@@ -686,7 +694,8 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
   const photos = (project.photos || []).filter(ph => !ph.data && fileMap[ph.id]);
   const floors = project.siteMapFloors || [];
   const floorFiles = floors.filter(f => fileMap['sitemap_' + f.id] || (project._smLegacyFloorId === f.id && fileMap['sitemap']));
-  const total = photos.length + floorFiles.length;
+  const hasCableMap = !!fileMap['cablemap'];
+  const total = photos.length + floorFiles.length + (hasCableMap ? 1 : 0);
   if (total === 0) return;
 
   let done = 0;
@@ -727,6 +736,20 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
     done++;
     if (onProgress) onProgress((done / total) * 100, `Downloading floor map ${done} of ${total}…`);
   }
+
+  // Cable run map
+  if (hasCableMap) {
+    try {
+      const f = fileMap['cablemap'];
+      const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
+      const blob = await r.blob();
+      const crDataUrl = await _blobToDataUrl(blob);
+      await _idbSavePhotoData('cablemap_' + project.id, crDataUrl);
+      driveMap['_cableMap'] = { driveFileId: f.id, dataLen: crDataUrl.length };
+    } catch(e) { console.warn('Cable map download failed:', e); }
+    done++;
+    if (onProgress) onProgress((done / total) * 100, `Downloading cable map…`);
+  }
   _saveDriveMap(project.id, driveMap);
 }
 
@@ -736,7 +759,9 @@ async function _indexDrivePhotos(project, mediaFolderId) {
   const driveMap = { folderId: mediaFolderId };
   for (const f of files) {
     const name = f.name.replace(/\.[^.]+$/, '');
-    if (name === 'sitemap' || name.startsWith('sitemap_')) {
+    if (name === 'cablemap') {
+      driveMap['_cableMap'] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
+    } else if (name === 'sitemap' || name.startsWith('sitemap_')) {
       const smKey = name === 'sitemap' ? '_siteMap' : '_siteMap_' + name.slice(8);
       driveMap[smKey] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
     } else {
@@ -923,6 +948,41 @@ function _gdriveQueueAutoSync() {
   _autoSyncTimer = setTimeout(_gdriveAutoSync, 15000);
 }
 
+// Called when photos are added — triggers sync faster (5s) so the manifest
+// gets to Drive quickly even before binaries finish uploading
+function _gdriveQueuePhotoSync() {
+  if (!_driveToken || !navigator.onLine) return;
+  _autoSyncDirty = true;
+  clearTimeout(_autoSyncTimer);
+  _autoSyncTimer = setTimeout(_gdriveAutoSync, 5000);
+}
+
+// Helper: save metadata JSON to Drive (with photo manifest showing sync status)
+async function _gdriveSaveMetadata(p, folderId, mediaFolderId) {
+  const bundle = _buildMetadataBundle(p, mediaFolderId);
+  const content = JSON.stringify(bundle);
+  const desc = _projectDescription(p);
+  const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
+  const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+  const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const { files } = await search.json();
+  if (files?.length) {
+    await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
+    });
+    await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: desc })
+    });
+  } else {
+    const boundary = 'nrm' + Date.now();
+    const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', description: desc });
+    const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
+    await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
+    });
+  }
+}
+
 async function _gdriveAutoSync() {
   if (_autoSyncing || !_autoSyncDirty || !_driveToken || !navigator.onLine) return;
   const p = getProject();
@@ -940,12 +1000,29 @@ async function _gdriveAutoSync() {
     const driveMap = _getDriveMap(p.id);
     let mediaFolderId = driveMap.folderId || null;
 
-    if (allPhotos.length > 0 || floorImgs.length > 0) {
+    // Cable run map image
+    let crMapData = null;
+    if (p.cableRunMap) {
+      crMapData = p.cableRunMap.image || await _lazyGetPhotoData('cablemap_' + p.id);
+    }
+
+    // Ensure media folder exists if we have any photos
+    if (allPhotos.length > 0 || floorImgs.length > 0 || crMapData) {
       const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
       if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
       driveMap.folderId = mediaFolderId;
+      _saveDriveMap(p.id, driveMap);
+    }
 
-      // Find photos that need uploading
+    // ── STEP 1: Save metadata FIRST with photo manifest ──
+    // This ensures the backup file always knows about ALL photos,
+    // even if the binary upload hasn't happened yet.
+    _showDriveSyncStatus('syncing', 'manifest');
+    await _gdriveSaveMetadata(p, folderId, mediaFolderId);
+
+    // ── STEP 2: Upload photo binaries in background ──
+    let photosChanged = false;
+    if (allPhotos.length > 0 || floorImgs.length > 0) {
       const toUpload = allPhotos.filter(ph => {
         const entry = driveMap[ph.id];
         const len = ph.dataLen || 0;
@@ -968,6 +1045,7 @@ async function _gdriveAutoSync() {
             driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
             if (!ph.dataLen) ph.dataLen = phData.length;
             uploaded++;
+            photosChanged = true;
             _showDriveSyncStatus('syncing', `${uploaded}/${toUpload.length} photos`);
           } catch (e) { console.warn('[AutoSync] Photo upload failed:', ph.id, e.message); }
         }));
@@ -982,6 +1060,21 @@ async function _gdriveAutoSync() {
           const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
           const did = await _driveUploadBlob(mediaFolderId, 'sitemap_' + fl.id + '.' + ext, blob, smEntry?.driveFileId);
           driveMap[smKey] = { driveFileId: did, dataLen: smData.length };
+          photosChanged = true;
+        }
+      }
+
+      // Upload cable run map image if new/changed
+      if (crMapData) {
+        const crKey = '_cableMap';
+        const crEntry = driveMap[crKey];
+        if (!crEntry?.driveFileId || crEntry.dataLen !== crMapData.length) {
+          _showDriveSyncStatus('syncing', 'cable map');
+          const blob = _dataUrlToBlob(crMapData);
+          const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+          const did = await _driveUploadBlob(mediaFolderId, 'cablemap.' + ext, blob, crEntry?.driveFileId);
+          driveMap[crKey] = { driveFileId: did, dataLen: crMapData.length };
+          photosChanged = true;
         }
       }
 
@@ -989,40 +1082,22 @@ async function _gdriveAutoSync() {
       const localIds = new Set(allPhotos.map(ph => ph.id));
       const floorKeys = new Set(floors.map(f => '_siteMap_' + f.id));
       for (const [key, entry] of Object.entries(driveMap)) {
-        if (key === 'folderId' || key === '_siteMap' || key.startsWith('_siteMap_')) { if (key.startsWith('_siteMap_') && !floorKeys.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; } continue; }
+        if (key === 'folderId' || key === '_cableMap' || key === '_siteMap' || key.startsWith('_siteMap_')) { if (key.startsWith('_siteMap_') && !floorKeys.has(key) && entry.driveFileId) { await _driveDeleteFile(entry.driveFileId); delete driveMap[key]; photosChanged = true; } continue; }
         if (!localIds.has(key) && entry.driveFileId) {
           await _driveDeleteFile(entry.driveFileId);
           delete driveMap[key];
+          photosChanged = true;
         }
       }
       _saveDriveMap(p.id, driveMap);
     }
 
-    // Save metadata JSON
-    _showDriveSyncStatus('syncing', 'metadata');
-    const stripped = _stripPhotoData(p);
-    const bundle = { _netrack_version: 2, _separateMedia: true, _mediaFolderId: mediaFolderId, typeColors: state.typeColors || {}, globalVendors: state.globalVendors || [], project: stripped };
-    const content = JSON.stringify(bundle);
-    const desc = _projectDescription(p);
-    const fileName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') + '_netrack.json';
-    const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
-    const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-    const { files } = await search.json();
-    if (files?.length) {
-      await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
-      });
-      await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: desc })
-      });
-    } else {
-      const boundary = 'nrm' + Date.now();
-      const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', description: desc });
-      const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
-      await _driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body
-      });
+    // ── STEP 3: Save metadata AGAIN if photos changed (updated sync status) ──
+    if (photosChanged) {
+      _showDriveSyncStatus('syncing', 'updating manifest');
+      await _gdriveSaveMetadata(p, folderId, mediaFolderId);
     }
+
     await _gdriveSaveManufacturers(folderId);
     await _gdriveSaveFolders(folderId);
 

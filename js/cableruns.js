@@ -224,8 +224,9 @@ async function renderCableRunMap() {
         </div>
       </div>
       <div class="cr-map-canvas ${canEdit?'edit-mode':''}" id="cr-canvas"
-        style="cursor:${cursor}"
+        style="cursor:${cursor};touch-action:none"
         onmousedown="crMouseDown(event)" onmousemove="crMouseMove(event)" onmouseup="crMouseUp(event)"
+        ontouchstart="crTouchStart(event)" ontouchmove="crTouchMove(event)" ontouchend="crTouchEnd(event)"
         onclick="crCanvasClick(event)" ondblclick="crDblClick(event)" onwheel="crWheel(event)">
         ${canEdit ? `<div class="cr-edit-badge">✎ EDIT${_crDrawing ? ' · DRAWING — click to add points, dbl-click to finish' : _crPlacingSymbol ? ' · Click map to place ' + (CR_SYMBOLS[_crPlacingSymbol]?.label||'') : ''}</div>` : ''}
         ${canEdit && _crDrawing ? `<div class="cr-draw-hint">Click: add point &nbsp;|&nbsp; Double-click: finish &nbsp;|&nbsp; ESC: cancel</div>` : ''}
@@ -373,6 +374,63 @@ function crWheel(e) {
 function crZoomIn() { _crZoom = Math.min(5, _crZoom * 1.2); const p = document.getElementById('cr-pan'); if (p) p.style.transform = `translate(${_crPan.x}px,${_crPan.y}px) scale(${_crZoom})`; }
 function crZoomOut() { _crZoom = Math.max(0.2, _crZoom / 1.2); const p = document.getElementById('cr-pan'); if (p) p.style.transform = `translate(${_crPan.x}px,${_crPan.y}px) scale(${_crZoom})`; }
 function crResetView() { _crPan = {x:0,y:0}; _crZoom = 1; const p = document.getElementById('cr-pan'); if (p) p.style.transform = 'translate(0px,0px) scale(1)'; }
+
+// ── Touch events for mobile pan/zoom ──
+let _crTouchPan = null;
+let _crPinch = null;
+let _crLastTap = 0;
+
+function crTouchStart(e) {
+  if (e.touches.length === 1) {
+    // Double-tap to reset view
+    const now = Date.now();
+    if (now - _crLastTap < 300) { crResetView(); _crLastTap = 0; e.preventDefault(); return; }
+    _crLastTap = now;
+
+    // Single finger: pan (if not drawing/placing)
+    if (!_crDrawing && !_crPlacingSymbol) {
+      e.preventDefault();
+      const t = e.touches[0];
+      _crTouchPan = { startX: t.clientX, startY: t.clientY, origX: _crPan.x, origY: _crPan.y };
+      _crPinch = null;
+    } else if (_crDrawing || _crPlacingSymbol) {
+      // Tap to place point or symbol on touch
+      e.preventDefault();
+      const t = e.touches[0];
+      const fakeEvt = { clientX: t.clientX, clientY: t.clientY, stopPropagation: () => {} };
+      if (_crPlacingSymbol) crCanvasClick(fakeEvt);
+      else if (_crDrawing) crCanvasClick(fakeEvt);
+    }
+  } else if (e.touches.length === 2) {
+    e.preventDefault();
+    _crTouchPan = null;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    _crPinch = { startDist: Math.hypot(dx, dy), startZoom: _crZoom, startPanX: _crPan.x, startPanY: _crPan.y };
+  }
+}
+
+function crTouchMove(e) {
+  e.preventDefault();
+  if (e.touches.length === 1 && _crTouchPan) {
+    const t = e.touches[0];
+    _crPan.x = _crTouchPan.origX + (t.clientX - _crTouchPan.startX);
+    _crPan.y = _crTouchPan.origY + (t.clientY - _crTouchPan.startY);
+    const pan = document.getElementById('cr-pan');
+    if (pan) pan.style.transform = `translate(${_crPan.x}px,${_crPan.y}px) scale(${_crZoom})`;
+  } else if (e.touches.length === 2 && _crPinch) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    _crZoom = Math.max(0.2, Math.min(5, _crPinch.startZoom * Math.hypot(dx, dy) / _crPinch.startDist));
+    const pan = document.getElementById('cr-pan');
+    if (pan) pan.style.transform = `translate(${_crPan.x}px,${_crPan.y}px) scale(${_crZoom})`;
+  }
+}
+
+function crTouchEnd(e) {
+  if (e.touches.length < 2) _crPinch = null;
+  if (e.touches.length === 0) _crTouchPan = null;
+}
 
 function crToggleEdit() {
   _crEditMode = !_crEditMode;

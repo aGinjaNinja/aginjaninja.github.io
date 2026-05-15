@@ -844,7 +844,13 @@ async function backupProjectToAgent(p, silent = true) {
   const cfg = loadBackupConfig();
   const mode = cfg.mode || 'local-fs';
   if (mode === 'none') return;
-  const bundle = { _netrack_version: 2, typeColors: state.typeColors, globalVendors: state.globalVendors || [], project: p };
+  // Reconstitute cable run map image from IDB so the backup file is complete
+  const projCopy = { ...p };
+  if (projCopy.cableRunMap && !projCopy.cableRunMap.image) {
+    const crImg = await _lazyGetPhotoData('cablemap_' + p.id).catch(() => null);
+    if (crImg) projCopy.cableRunMap = { ...projCopy.cableRunMap, image: crImg };
+  }
+  const bundle = { _netrack_version: 2, typeColors: state.typeColors, globalVendors: state.globalVendors || [], project: projCopy };
   try {
     if (mode === 'local-fs') {
       await fsaWriteProject(p, bundle, silent);

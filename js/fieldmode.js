@@ -77,6 +77,7 @@ function fieldQuickPhoto() {
       p.photos.push(photo);
       logChange(`Photo added (field): "${photo.caption}"`);
       save();
+      if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
       renderFieldMode();
       toast('Photo added','success');
     };
