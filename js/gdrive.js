@@ -225,7 +225,7 @@ function _stripPhotoData(project, includeSyncStatus) {
     });
   }
   if (p.siteMapFloors) p.siteMapFloors = p.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
-  if (p.cableRunMap?.image) p.cableRunMap = { ...p.cableRunMap, image: null };
+  if (p.cableRunMaps) p.cableRunMaps = p.cableRunMaps.map(m => m.image ? { ...m, image: null } : m);
   return p;
 }
 
@@ -694,8 +694,8 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
   const photos = (project.photos || []).filter(ph => !ph.data && fileMap[ph.id]);
   const floors = project.siteMapFloors || [];
   const floorFiles = floors.filter(f => fileMap['sitemap_' + f.id] || (project._smLegacyFloorId === f.id && fileMap['sitemap']));
-  const hasCableMap = !!fileMap['cablemap'];
-  const total = photos.length + floorFiles.length + (hasCableMap ? 1 : 0);
+  const cableMaps = (project.cableRunMaps || []).filter(m => fileMap['cablemap_' + m.id] || fileMap['cablemap']);
+  const total = photos.length + floorFiles.length + cableMaps.length;
   if (total === 0) return;
 
   let done = 0;
@@ -737,16 +737,16 @@ async function _downloadDrivePhotos(project, mediaFolderId, onProgress) {
     if (onProgress) onProgress((done / total) * 100, `Downloading floor map ${done} of ${total}…`);
   }
 
-  // Cable run map
-  if (hasCableMap) {
+  // Cable run maps
+  for (const crm of cableMaps) {
     try {
-      const f = fileMap['cablemap'];
+      const f = fileMap['cablemap_' + crm.id] || fileMap['cablemap'];
       const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
       const blob = await r.blob();
       const crDataUrl = await _blobToDataUrl(blob);
-      await _idbSavePhotoData('cablemap_' + project.id, crDataUrl);
-      driveMap['_cableMap'] = { driveFileId: f.id, dataLen: crDataUrl.length };
-    } catch(e) { console.warn('Cable map download failed:', e); }
+      await _idbSavePhotoData('cablemap_' + project.id + '_' + crm.id, crDataUrl);
+      driveMap['_cableMap_' + crm.id] = { driveFileId: f.id, dataLen: crDataUrl.length };
+    } catch(e) { console.warn('Cable map download failed:', crm.id, e); }
     done++;
     if (onProgress) onProgress((done / total) * 100, `Downloading cable map…`);
   }
@@ -761,6 +761,8 @@ async function _indexDrivePhotos(project, mediaFolderId) {
     const name = f.name.replace(/\.[^.]+$/, '');
     if (name === 'cablemap') {
       driveMap['_cableMap'] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
+    } else if (name.startsWith('cablemap_')) {
+      driveMap['_cableMap_' + name.slice(9)] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
     } else if (name === 'sitemap' || name.startsWith('sitemap_')) {
       const smKey = name === 'sitemap' ? '_siteMap' : '_siteMap_' + name.slice(8);
       driveMap[smKey] = { driveFileId: f.id, dataLen: parseInt(f.size) || 0 };
@@ -1000,14 +1002,15 @@ async function _gdriveAutoSync() {
     const driveMap = _getDriveMap(p.id);
     let mediaFolderId = driveMap.folderId || null;
 
-    // Cable run map image
-    let crMapData = null;
-    if (p.cableRunMap) {
-      crMapData = p.cableRunMap.image || await _lazyGetPhotoData('cablemap_' + p.id);
+    // Cable run map images (multi-map)
+    const crMapsData = [];
+    for (const m of (p.cableRunMaps || [])) {
+      const d = m.image || await _lazyGetPhotoData('cablemap_' + p.id + '_' + m.id);
+      if (d) crMapsData.push({ map: m, data: d });
     }
 
     // Ensure media folder exists if we have any photos
-    if (allPhotos.length > 0 || floorImgs.length > 0 || crMapData) {
+    if (allPhotos.length > 0 || floorImgs.length > 0 || crMapsData.length > 0) {
       const safeName = p.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
       if (!mediaFolderId) mediaFolderId = await _getOrCreateSubFolder(folderId, safeName + '_media');
       driveMap.folderId = mediaFolderId;
@@ -1064,16 +1067,16 @@ async function _gdriveAutoSync() {
         }
       }
 
-      // Upload cable run map image if new/changed
-      if (crMapData) {
-        const crKey = '_cableMap';
+      // Upload cable run map images if new/changed
+      for (const { map: crm, data: crData } of crMapsData) {
+        const crKey = '_cableMap_' + crm.id;
         const crEntry = driveMap[crKey];
-        if (!crEntry?.driveFileId || crEntry.dataLen !== crMapData.length) {
+        if (!crEntry?.driveFileId || crEntry.dataLen !== crData.length) {
           _showDriveSyncStatus('syncing', 'cable map');
-          const blob = _dataUrlToBlob(crMapData);
+          const blob = _dataUrlToBlob(crData);
           const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-          const did = await _driveUploadBlob(mediaFolderId, 'cablemap.' + ext, blob, crEntry?.driveFileId);
-          driveMap[crKey] = { driveFileId: did, dataLen: crMapData.length };
+          const did = await _driveUploadBlob(mediaFolderId, 'cablemap_' + crm.id + '.' + ext, blob, crEntry?.driveFileId);
+          driveMap[crKey] = { driveFileId: did, dataLen: crData.length };
           photosChanged = true;
         }
       }

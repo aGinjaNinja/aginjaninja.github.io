@@ -4,13 +4,14 @@ const CABLE_TYPES = ['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'
 //  CABLE RUN MAP — state
 // ═══════════════════════════════════════════
 let _crView = 'table'; // 'table' | 'map'
+let _crCurrentMapId = null;
 let _crPan = {x:0,y:0}, _crZoom = 1;
 let _crDragging = false, _crDragStart = {x:0,y:0}, _crPanStart = {x:0,y:0};
 let _crEditMode = false;
 let _crDrawing = false;
 let _crCurrentLine = null;
-let _crPlacingSymbol = null; // symbol type string or null
-let _crDragSymbol = null;    // { id, offX, offY }
+let _crPlacingSymbol = null;
+let _crDragSymbol = null;
 
 // SVG symbol definitions (viewBox 0 0 24 24)
 const CR_SYMBOLS = {
@@ -24,6 +25,20 @@ const CR_SYMBOLS = {
   riser:       { label: 'Riser',            icon: `<path d="M12 22V2M8 6l4-4 4 4M8 18l4 4 4-4" stroke="#4fc3f7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>` },
 };
 
+// ── Multi-map helpers ──
+function _crGetCurrentMap() {
+  const p = getProject();
+  if (!p.cableRunMaps?.length) return null;
+  const m = p.cableRunMaps.find(m => m.id === _crCurrentMapId);
+  if (m) return m;
+  _crCurrentMapId = p.cableRunMaps[0].id;
+  return p.cableRunMaps[0];
+}
+
+function _crMapIdbKey(mapId) {
+  return 'cablemap_' + getProject().id + '_' + mapId;
+}
+
 // ═══════════════════════════════════════════
 //  RENDER — entry point
 // ═══════════════════════════════════════════
@@ -33,7 +48,7 @@ function renderCableRuns() {
 }
 
 // ═══════════════════════════════════════════
-//  TABLE VIEW (original)
+//  TABLE VIEW
 // ═══════════════════════════════════════════
 function renderCableRunTable() {
   const p = getProject();
@@ -104,14 +119,16 @@ function renderCableRunTable() {
 function crSetView(v) { _crView = v; renderCableRuns(); }
 
 // ═══════════════════════════════════════════
-//  MAP VIEW
+//  MAP VIEW — multi-map with tabs
 // ═══════════════════════════════════════════
 async function renderCableRunMap() {
   const p = getProject();
-  const m = p.cableRunMap;
-  // Load map image from separate store if needed
-  if (!m.image) {
-    const imgData = await _lazyGetPhotoData('cablemap_' + p.id);
+  const maps = p.cableRunMaps || [];
+  const m = _crGetCurrentMap();
+
+  // Load map image from IDB if needed
+  if (m && !m.image) {
+    const imgData = await _lazyGetPhotoData(_crMapIdbKey(m.id));
     if (imgData) m.image = imgData;
   }
 
@@ -120,19 +137,46 @@ async function renderCableRunMap() {
       <button onclick="crSetView('table')">Table</button>
       <button class="active" onclick="crSetView('map')">Map</button>
     </div>
-    <button class="btn btn-sm ${_crEditMode?'btn-primary':'btn-ghost'}" onclick="crToggleEdit()"
+    ${m ? `<button class="btn btn-sm ${_crEditMode?'btn-primary':'btn-ghost'}" onclick="crToggleEdit()"
       style="${_crEditMode?'border-color:var(--amber);background:rgba(255,170,0,.15);color:var(--amber)':''}">
       ${_crEditMode?'🔓 Edit Mode ON':'🔒 View Only'}
-    </button>
-    ${m.image?`<button class="btn btn-ghost btn-sm" onclick="crClearImage()">✕ Clear Image</button>`:''}
+    </button>` : ''}
   `);
 
-  if (!m.image) {
-    const existingPhotos = (p.photos || []).filter(ph => ph.data);
+  // ── Map tabs ──
+  const tabsHtml = `
+    <div class="sm-floor-tabs" style="margin-bottom:0">
+      ${maps.map(mp => `
+        <div class="sm-floor-tab ${mp.id===_crCurrentMapId?'active':''}" onclick="crSelectMap('${mp.id}')">
+          ${esc(mp.name)}
+          ${maps.length > 1 ? `<span class="sm-floor-tab-x" onclick="event.stopPropagation();crDeleteMap('${mp.id}')" title="Delete map">✕</span>` : ''}
+        </div>
+      `).join('')}
+      <div class="sm-floor-tab sm-floor-add" onclick="crAddMap()" title="Add new map">+</div>
+      ${m ? `<div class="sm-floor-tab sm-floor-rename" onclick="crRenameMap('${m.id}')" title="Rename">✎</div>` : ''}
+    </div>`;
+
+  // No maps yet — show create prompt
+  if (!m) {
     document.getElementById('view-area').innerHTML = `
+      ${tabsHtml}
       <div class="empty-state">
         <div class="empty-icon">🗺</div>
-        <h3>No cable run map image</h3>
+        <h3>No cable run maps yet</h3>
+        <p>Create a map and upload a floor plan to draw cable runs on.</p>
+        <button class="btn btn-primary" style="margin-top:12px" onclick="crAddMap()">+ New Cable Run Map</button>
+      </div>`;
+    return;
+  }
+
+  // Map exists but no image
+  if (!m.image) {
+    const existingPhotos = (p.photos || []).filter(ph => ph.thumb || ph.id);
+    document.getElementById('view-area').innerHTML = `
+      ${tabsHtml}
+      <div class="empty-state">
+        <div class="empty-icon">🗺</div>
+        <h3>${esc(m.name)} — No image</h3>
         <p>Upload a floor plan or select an existing site photo to draw cable runs on.</p>
         <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;justify-content:center">
           <label class="btn btn-primary" style="cursor:pointer">
@@ -162,15 +206,14 @@ async function renderCableRunMap() {
     </g>`;
   }).join('');
 
-  // In-progress drawing
   const drawingLine = (_crDrawing && _crCurrentLine && _crCurrentLine.points.length > 0) ? (() => {
     const pts = _crCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
     return `<path d="${pts}" stroke="${_crCurrentLine.color||'#ffaa00'}" stroke-width="2" fill="none" opacity="0.6" vector-effect="non-scaling-stroke"/>`;
   })() : '';
 
-  // Symbol palette HTML
+  // Symbol palette (disabled when drawing)
   const paletteHtml = Object.entries(CR_SYMBOLS).map(([key, sym]) =>
-    `<button class="cr-symbol-btn ${_crPlacingSymbol===key?'active':''}" onclick="crSelectSymbol('${key}')" ${!canEdit?'disabled':''}>
+    `<button class="cr-symbol-btn ${_crPlacingSymbol===key?'active':''}" onclick="crSelectSymbol('${key}')" ${!canEdit||_crDrawing?'disabled':''} ${_crDrawing?'style="opacity:0.4;pointer-events:none"':''}>
       <svg width="20" height="20" viewBox="0 0 24 24">${sym.icon}</svg>
       ${sym.label}
     </button>`
@@ -197,6 +240,7 @@ async function renderCableRunMap() {
   }).join('');
 
   document.getElementById('view-area').innerHTML = `
+    ${tabsHtml}
     <div class="cr-map-wrap">
       <div class="cr-map-toolbar">
         ${canEdit ? `
@@ -208,18 +252,19 @@ async function renderCableRunMap() {
               : `<button class="btn btn-danger btn-sm" style="flex:1;font-size:11px" onclick="crCancelDraw()">✕ Cancel Drawing</button>`
             }
           </div>
-          <div class="cr-toolbar-section">Symbols</div>
+          <div class="cr-toolbar-section">Symbols${_crDrawing?' <span style="font-size:9px;color:var(--text3)">(finish drawing first)</span>':''}</div>
           ${paletteHtml}
           ${_crPlacingSymbol ? `<button class="btn btn-danger btn-sm" style="width:100%;font-size:10px;margin-top:2px" onclick="crCancelSymbol()">✕ Cancel Placement</button>` : ''}
           <div class="cr-toolbar-section">Paths (${paths.length})</div>
           ${pathsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">Draw a path on the map</div>`}
           <div class="cr-toolbar-section">Placed Symbols (${symbols.length})</div>
           ${symbolsList || `<div style="font-size:11px;color:var(--text3);padding:4px 0">Select a symbol above, then click the map</div>`}
-          <div style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border)">
+          <div style="margin-top:auto;padding-top:8px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:4px">
             <label class="btn btn-ghost btn-sm" style="width:100%;font-size:10px;cursor:pointer">
               🔄 Replace Image
               <input type="file" accept="image/*" style="display:none" onchange="crUploadImage(event)">
             </label>
+            <button class="btn btn-ghost btn-sm" style="width:100%;font-size:10px" onclick="crClearImage()">✕ Clear Image</button>
           </div>
         ` : `
           <div style="padding:8px 0;font-size:12px;color:var(--text2)">
@@ -267,7 +312,6 @@ async function renderCableRunMap() {
       </div>
     </div>`;
 
-  // ESC key handler
   document.addEventListener('keydown', _crKeyHandler);
 }
 
@@ -279,6 +323,82 @@ function _crKeyHandler(e) {
 }
 
 // ═══════════════════════════════════════════
+//  MAP TAB MANAGEMENT
+// ═══════════════════════════════════════════
+function crSelectMap(id) {
+  _crCurrentMapId = id;
+  _crPan = {x:0,y:0}; _crZoom = 1;
+  _crEditMode = false; _crDrawing = false; _crCurrentLine = null; _crPlacingSymbol = null;
+  renderCableRunMap();
+}
+
+function crAddMap() {
+  openModal(`
+    <h3>New Cable Run Map</h3>
+    <div class="form-row"><label>Map Name</label>
+      <input class="form-control" id="crm-name" placeholder="e.g. Floor 1, Building A" autofocus></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="crSaveNewMap()">Create</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('crm-name')?.focus(), 50);
+}
+
+function crSaveNewMap() {
+  const name = document.getElementById('crm-name')?.value?.trim();
+  if (!name) return toast('Enter a map name', 'error');
+  const p = getProject();
+  const newMap = { id: genId(), name, image: null, thumb: null, paths: [], symbols: [] };
+  p.cableRunMaps.push(newMap);
+  _crCurrentMapId = newMap.id;
+  logChange(`Cable run map created: "${name}"`);
+  save(); closeModal(); renderCableRunMap();
+  toast(`Map "${name}" created`, 'success');
+}
+
+function crRenameMap(id) {
+  const p = getProject();
+  const m = p.cableRunMaps.find(x => x.id === id);
+  if (!m) return;
+  openModal(`
+    <h3>Rename Map</h3>
+    <div class="form-row"><label>Map Name</label>
+      <input class="form-control" id="crm-rename" value="${esc(m.name)}" autofocus></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="crSaveRenameMap('${id}')">Save</button>
+    </div>
+  `);
+  setTimeout(() => { const el = document.getElementById('crm-rename'); el?.focus(); el?.select(); }, 50);
+}
+
+function crSaveRenameMap(id) {
+  const name = document.getElementById('crm-rename')?.value?.trim();
+  if (!name) return toast('Enter a name', 'error');
+  const p = getProject();
+  const m = p.cableRunMaps.find(x => x.id === id);
+  if (!m) return;
+  const old = m.name;
+  m.name = name;
+  logChange(`Cable run map renamed: "${old}" → "${name}"`);
+  save(); closeModal(); renderCableRunMap();
+}
+
+function crDeleteMap(id) {
+  const p = getProject();
+  const m = p.cableRunMaps.find(x => x.id === id);
+  if (!m) return;
+  if (!confirm(`Delete cable run map "${m.name}"? This removes all paths and symbols on it.`)) return;
+  _idbDeletePhotoData(_crMapIdbKey(id)).catch(() => {});
+  p.cableRunMaps = p.cableRunMaps.filter(x => x.id !== id);
+  if (_crCurrentMapId === id) _crCurrentMapId = p.cableRunMaps[0]?.id || null;
+  logChange(`Cable run map deleted: "${m.name}"`);
+  save(); renderCableRunMap();
+  toast('Map deleted');
+}
+
+// ═══════════════════════════════════════════
 //  MAP — image management
 // ═══════════════════════════════════════════
 function crUploadImage(e) {
@@ -286,13 +406,14 @@ function crUploadImage(e) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async ev => {
-    const p = getProject();
+    const m = _crGetCurrentMap();
+    if (!m) return;
     const dataUrl = ev.target.result;
-    await _idbSavePhotoData('cablemap_' + p.id, dataUrl);
-    p.cableRunMap.image = dataUrl; // keep in memory for immediate rendering
-    p.cableRunMap.thumb = await _generateThumb(dataUrl) || '';
+    await _idbSavePhotoData(_crMapIdbKey(m.id), dataUrl);
+    m.image = dataUrl;
+    m.thumb = await _generateThumb(dataUrl) || '';
     _crPan = {x:0,y:0}; _crZoom = 1;
-    logChange('Cable run map image uploaded');
+    logChange(`Cable run map "${m.name}" image uploaded`);
     save(); renderCableRunMap(); toast('Map image uploaded','success');
   };
   reader.readAsDataURL(file);
@@ -322,28 +443,31 @@ async function crUseExistingPhoto(idx) {
   const p = getProject();
   const ph = p.photos[idx];
   if (!ph) return;
+  const m = _crGetCurrentMap();
+  if (!m) return;
   const photoData = ph.data || await _lazyGetPhotoData(ph.id);
   if (!photoData) return toast('Photo data not found', 'error');
-  await _idbSavePhotoData('cablemap_' + p.id, photoData);
-  p.cableRunMap.image = photoData;
-  p.cableRunMap.thumb = ph.thumb || '';
+  await _idbSavePhotoData(_crMapIdbKey(m.id), photoData);
+  m.image = photoData;
+  m.thumb = ph.thumb || '';
   _crPan = {x:0,y:0}; _crZoom = 1;
-  logChange('Cable run map: using existing photo');
+  logChange(`Cable run map "${m.name}": using existing photo`);
   save(); closeModal(); renderCableRunMap(); toast('Photo loaded as map','success');
 }
 
 function crClearImage() {
+  const m = _crGetCurrentMap();
+  if (!m) return;
   if (!confirm('Clear the map image? Paths and symbols will be kept.')) return;
-  const p = getProject();
-  p.cableRunMap.image = null;
-  p.cableRunMap.thumb = null;
-  _idbDeletePhotoData('cablemap_' + p.id).catch(() => {});
-  logChange('Cable run map image cleared');
+  m.image = null;
+  m.thumb = null;
+  _idbDeletePhotoData(_crMapIdbKey(m.id)).catch(() => {});
+  logChange(`Cable run map "${m.name}" image cleared`);
   save(); renderCableRunMap();
 }
 
 // ═══════════════════════════════════════════
-//  MAP — pan / zoom
+//  MAP — pan / zoom (mouse)
 // ═══════════════════════════════════════════
 function crMouseDown(e) {
   if (_crDragSymbol) return;
@@ -387,31 +511,26 @@ let _crLastTap = 0;
 
 function crTouchStart(e) {
   if (e.touches.length === 1) {
-    // Double-tap to reset view
     const now = Date.now();
     if (now - _crLastTap < 300) { crResetView(); _crLastTap = 0; e.preventDefault(); return; }
     _crLastTap = now;
-
-    // Single finger: pan (if not drawing/placing)
     if (!_crDrawing && !_crPlacingSymbol) {
       e.preventDefault();
       const t = e.touches[0];
       _crTouchPan = { startX: t.clientX, startY: t.clientY, origX: _crPan.x, origY: _crPan.y };
       _crPinch = null;
     } else if (_crDrawing || _crPlacingSymbol) {
-      // Tap to place point or symbol on touch
       e.preventDefault();
       const t = e.touches[0];
       const fakeEvt = { clientX: t.clientX, clientY: t.clientY, stopPropagation: () => {} };
-      if (_crPlacingSymbol) crCanvasClick(fakeEvt);
-      else if (_crDrawing) crCanvasClick(fakeEvt);
+      crCanvasClick(fakeEvt);
     }
   } else if (e.touches.length === 2) {
     e.preventDefault();
     _crTouchPan = null;
     const dx = e.touches[0].clientX - e.touches[1].clientX;
     const dy = e.touches[0].clientY - e.touches[1].clientY;
-    _crPinch = { startDist: Math.hypot(dx, dy), startZoom: _crZoom, startPanX: _crPan.x, startPanY: _crPan.y };
+    _crPinch = { startDist: Math.hypot(dx, dy), startZoom: _crZoom };
   }
 }
 
@@ -474,16 +593,12 @@ function crCancelDraw() {
 
 function crCanvasClick(e) {
   if (!_crEditMode) return;
-
-  // Placing a symbol
   if (_crPlacingSymbol) {
     const pt = crEventToImgPct(e);
     if (!pt) return;
     crPlaceSymbolAt(pt.x, pt.y);
     return;
   }
-
-  // Drawing a path
   if (!_crDrawing || !_crCurrentLine) return;
   const pt = crEventToImgPct(e);
   if (!pt) return;
@@ -502,8 +617,9 @@ function crDblClick(e) {
 }
 
 function crRedrawSvg() {
-  const p = getProject();
-  const paths = p.cableRunMap?.paths || [];
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  const paths = m.paths || [];
   const svgPaths = paths.map(line => {
     if (!line.points || line.points.length < 2) return '';
     const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
@@ -565,8 +681,9 @@ function crSavePath() {
   const color = document.getElementById('crp-color')?.value || '#ffaa00';
   const cableType = document.getElementById('crp-type')?.value || '';
   const linkedRunId = document.getElementById('crp-link')?.value || '';
-  const p = getProject();
-  p.cableRunMap.paths.push({ id: genId(), points: line.points, label, color, cableType, linkedRunId });
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  m.paths.push({ id: genId(), points: line.points, label, color, cableType, linkedRunId });
   logChange(`Cable map path added: ${label || '(unlabeled)'}`);
   save(); closeModal(); window._crPendingLine = null; renderCableRunMap();
   toast('Path saved', 'success');
@@ -575,7 +692,9 @@ function crSavePath() {
 function crPathClick(id) {
   if (!_crEditMode) return;
   const p = getProject();
-  const line = (p.cableRunMap?.paths||[]).find(l => l.id === id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  const line = (m.paths||[]).find(l => l.id === id);
   if (!line) return;
   const runOpts = `<option value="">— None —</option>` +
     (p.cableRuns||[]).map(r => `<option value="${r.id}" ${line.linkedRunId===r.id?'selected':''}>${esc(r.label||r.fromRoom+' → '+r.toRoom)}</option>`).join('');
@@ -604,8 +723,9 @@ function crPathClick(id) {
 }
 
 function crUpdatePath(id) {
-  const p = getProject();
-  const line = (p.cableRunMap?.paths||[]).find(l => l.id === id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  const line = (m.paths||[]).find(l => l.id === id);
   if (!line) return;
   line.label = document.getElementById('ecp-label')?.value?.trim() || '';
   line.color = document.getElementById('ecp-color')?.value || '#ffaa00';
@@ -616,8 +736,9 @@ function crUpdatePath(id) {
 }
 
 function crDeletePath(id) {
-  const p = getProject();
-  p.cableRunMap.paths = (p.cableRunMap.paths||[]).filter(l => l.id !== id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  m.paths = (m.paths||[]).filter(l => l.id !== id);
   logChange('Cable map path deleted');
   save(); closeModal(); renderCableRunMap(); toast('Path deleted');
 }
@@ -626,6 +747,7 @@ function crDeletePath(id) {
 //  MAP — symbol placement
 // ═══════════════════════════════════════════
 function crSelectSymbol(type) {
+  if (_crDrawing) return; // can't place symbols while drawing
   _crPlacingSymbol = _crPlacingSymbol === type ? null : type;
   _crDrawing = false;
   _crCurrentLine = null;
@@ -640,19 +762,20 @@ function crPlaceSymbolAt(x, y) {
   const type = _crPlacingSymbol;
   if (!type) return;
   const def = CR_SYMBOLS[type];
-  const p = getProject();
+  const m = _crGetCurrentMap();
+  if (!m) return;
   const sym = { id: genId(), type, x, y, label: '', rotation: 0, size: 1 };
-  p.cableRunMap.symbols.push(sym);
+  m.symbols.push(sym);
   logChange(`Cable map symbol placed: ${def?.label || type}`);
   save();
-  // Stay in placement mode for rapid placement
   renderCableRunMap();
 }
 
 function crSymbolClick(id) {
   if (!_crEditMode) return;
-  const p = getProject();
-  const s = (p.cableRunMap?.symbols||[]).find(x => x.id === id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  const s = (m.symbols||[]).find(x => x.id === id);
   if (!s) return;
   const def = CR_SYMBOLS[s.type];
   const sz = s.size || 1;
@@ -686,8 +809,9 @@ function crSymbolClick(id) {
 }
 
 function crUpdateSymbol(id) {
-  const p = getProject();
-  const s = (p.cableRunMap?.symbols||[]).find(x => x.id === id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  const s = (m.symbols||[]).find(x => x.id === id);
   if (!s) return;
   s.label = document.getElementById('csm-label')?.value?.trim() || '';
   s.size = parseFloat(document.getElementById('csm-size')?.value) || 1;
@@ -697,8 +821,9 @@ function crUpdateSymbol(id) {
 }
 
 function crDeleteSymbol(id) {
-  const p = getProject();
-  p.cableRunMap.symbols = (p.cableRunMap.symbols||[]).filter(x => x.id !== id);
+  const m = _crGetCurrentMap();
+  if (!m) return;
+  m.symbols = (m.symbols||[]).filter(x => x.id !== id);
   logChange('Cable map symbol deleted');
   save(); closeModal(); renderCableRunMap(); toast('Symbol deleted');
 }
@@ -734,16 +859,15 @@ function crSymbolDragEnd(e) {
     const rect = img.getBoundingClientRect();
     const x = parseFloat(((e.clientX - rect.left) / rect.width * 100).toFixed(2));
     const y = parseFloat(((e.clientY - rect.top) / rect.height * 100).toFixed(2));
-    const p = getProject();
-    const s = (p.cableRunMap?.symbols||[]).find(sym => sym.id === _crDragSymbol.id);
-    if (s) { s.x = x; s.y = y; save(); }
+    const m = _crGetCurrentMap();
+    if (m) {
+      const s = (m.symbols||[]).find(sym => sym.id === _crDragSymbol.id);
+      if (s) { s.x = x; s.y = y; save(); }
+    }
   }
   _crDragSymbol = null;
 }
 
-// ═══════════════════════════════════════════
-//  MAP — symbol hover highlight
-// ═══════════════════════════════════════════
 function crHighlightSymbol(id, on) {
   const el = document.querySelector(`[data-sym-id="${id}"]`);
   if (!el) return;
@@ -759,7 +883,7 @@ function crHighlightSymbol(id, on) {
 }
 
 // ═══════════════════════════════════════════
-//  TABLE — CRUD (unchanged)
+//  TABLE — CRUD
 // ═══════════════════════════════════════════
 function toggleCableVerified(id, val) {
   const p=getProject();

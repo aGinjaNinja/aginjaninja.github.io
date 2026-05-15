@@ -156,9 +156,20 @@ function migrateProject(p) {
   if (!p.timeLog) p.timeLog = [];
   // Feature 11: Cable Runs
   if (!p.cableRuns) p.cableRuns = [];
-  if (!p.cableRunMap) p.cableRunMap = { image: null, thumb: null, paths: [], symbols: [] };
-  if (!p.cableRunMap.paths) p.cableRunMap.paths = [];
-  if (!p.cableRunMap.symbols) p.cableRunMap.symbols = [];
+  // Migrate single cableRunMap → cableRunMaps array
+  if (p.cableRunMap && !p.cableRunMaps) {
+    const mapId = genId();
+    const hasContent = p.cableRunMap.image || (p.cableRunMap.paths||[]).length > 0 || (p.cableRunMap.symbols||[]).length > 0;
+    if (hasContent) {
+      p.cableRunMaps = [{ id: mapId, name: 'Cable Run Map', image: null, thumb: p.cableRunMap.thumb || null, paths: p.cableRunMap.paths || [], symbols: p.cableRunMap.symbols || [] }];
+      p._crLegacyMapId = mapId;
+    } else {
+      p.cableRunMaps = [];
+    }
+    delete p.cableRunMap;
+  }
+  if (!p.cableRunMaps) p.cableRunMaps = [];
+  p.cableRunMaps.forEach(m => { if (!m.paths) m.paths = []; if (!m.symbols) m.symbols = []; });
   // Feature 12: Locations
   if (!p.locations) p.locations = [];
   // Feature 13: Site Map (multi-floor)
@@ -261,7 +272,7 @@ async function _idbSaveProject(project) {
   const lite = { ...project };
   if (lite.photos) lite.photos = lite.photos.map(ph => ph.data ? { ...ph, data: null } : ph);
   if (lite.siteMapFloors) lite.siteMapFloors = lite.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
-  if (lite.cableRunMap?.image) lite.cableRunMap = { ...lite.cableRunMap, image: null };
+  if (lite.cableRunMaps) lite.cableRunMaps = lite.cableRunMaps.map(m => m.image ? { ...m, image: null } : m);
   return new Promise((res, rej) => {
     const tx = db.transaction('projects', 'readwrite');
     tx.objectStore('projects').put(lite);
@@ -346,7 +357,13 @@ async function _lazyGetPhotoData(id) {
     if (secondId > 0) { projectId = rest.slice(0, secondId); mapKey = '_siteMap_' + rest.slice(secondId + 1); }
     else { projectId = rest; mapKey = '_siteMap'; }
   }
-  else if (id.startsWith('cablemap_')) { projectId = id.slice(9); mapKey = '_cableMap'; }
+  else if (id.startsWith('cablemap_')) {
+    // Format: cablemap_<projectId>_<mapId> or legacy cablemap_<projectId>
+    const rest = id.slice(9); // after 'cablemap_'
+    const idParts = rest.split('_id_');
+    if (idParts.length > 1) { projectId = idParts[0]; mapKey = '_cableMap_id_' + idParts[1]; }
+    else { projectId = rest; mapKey = '_cableMap'; }
+  }
   else { const p = getProject(); if (!p) return null; projectId = p.id; mapKey = id; }
   const driveMap = _getDriveMap(projectId);
   const entry = driveMap[mapKey];
@@ -466,10 +483,14 @@ async function _buildProjectBlob(p) {
         floors.push(fc);
       }
       parts.push(JSON.stringify(floors));
-    } else if (k === 'cableRunMap' && p.cableRunMap) {
-      const cr = { ...p.cableRunMap };
-      if (!cr.image) cr.image = await _lazyGetPhotoData('cablemap_' + p.id);
-      parts.push(JSON.stringify(cr));
+    } else if (k === 'cableRunMaps' && p.cableRunMaps) {
+      const maps = [];
+      for (const m of p.cableRunMaps) {
+        const mc = { ...m };
+        if (!mc.image) mc.image = await _lazyGetPhotoData('cablemap_' + p.id + '_' + m.id) || null;
+        maps.push(mc);
+      }
+      parts.push(JSON.stringify(maps));
     } else {
       parts.push(JSON.stringify(p[k]));
     }
@@ -507,10 +528,8 @@ async function _buildProjectZip(p) {
       });
     } else if (k === 'siteMapFloors' && p.siteMapFloors) {
       proj.siteMapFloors = p.siteMapFloors.map(f => { const { _data, ...rest } = f; return rest; });
-    } else if (k === 'cableRunMap' && p.cableRunMap) {
-      const cr = { ...p.cableRunMap };
-      delete cr.image;
-      proj.cableRunMap = cr;
+    } else if (k === 'cableRunMaps' && p.cableRunMaps) {
+      proj.cableRunMaps = p.cableRunMaps.map(m => { const { image, ...rest } = m; return rest; });
     } else {
       proj[k] = p[k];
     }
@@ -536,10 +555,10 @@ async function _buildProjectZip(p) {
     if (smData) zip.file('media/sitemap_' + f.id, smData);
   }
 
-  // Cable run map
-  if (p.cableRunMap) {
-    const crData = p.cableRunMap.image || await _lazyGetPhotoData('cablemap_' + p.id);
-    if (crData) zip.file('media/cablemap', crData);
+  // Cable run maps
+  for (const m of (p.cableRunMaps || [])) {
+    const crData = m.image || await _lazyGetPhotoData('cablemap_' + p.id + '_' + m.id);
+    if (crData) zip.file('media/cablemap_' + m.id, crData);
   }
 
   return zip.generateAsync({ type: 'blob' });
@@ -656,10 +675,22 @@ async function _migratePhotosToSeparateStore() {
         migrated = true;
       }
     }
-    if (p.cableRunMap?.image) {
-      await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
-      p.cableRunMap.image = null;
-      migrated = true;
+    for (const m of (p.cableRunMaps || [])) {
+      if (m.image) {
+        await _idbSavePhotoData('cablemap_' + p.id + '_' + m.id, m.image);
+        m.image = null;
+        migrated = true;
+      }
+    }
+    // Legacy single cableRunMap migration
+    if (p._crLegacyMapId && p.cableRunMaps?.[0]) {
+      const oldData = await _idbGetPhotoData('cablemap_' + p.id);
+      if (oldData) {
+        await _idbSavePhotoData('cablemap_' + p.id + '_' + p._crLegacyMapId, oldData);
+        await _idbDeletePhotoData('cablemap_' + p.id);
+        migrated = true;
+      }
+      delete p._crLegacyMapId;
     }
   }
   if (migrated) {
@@ -844,11 +875,14 @@ async function backupProjectToAgent(p, silent = true) {
   const cfg = loadBackupConfig();
   const mode = cfg.mode || 'local-fs';
   if (mode === 'none') return;
-  // Reconstitute cable run map image from IDB so the backup file is complete
+  // Reconstitute cable run map images from IDB so the backup file is complete
   const projCopy = { ...p };
-  if (projCopy.cableRunMap && !projCopy.cableRunMap.image) {
-    const crImg = await _lazyGetPhotoData('cablemap_' + p.id).catch(() => null);
-    if (crImg) projCopy.cableRunMap = { ...projCopy.cableRunMap, image: crImg };
+  if (projCopy.cableRunMaps) {
+    projCopy.cableRunMaps = await Promise.all(projCopy.cableRunMaps.map(async m => {
+      if (m.image) return m;
+      const crImg = await _lazyGetPhotoData('cablemap_' + p.id + '_' + m.id).catch(() => null);
+      return crImg ? { ...m, image: crImg } : m;
+    }));
   }
   const bundle = { _netrack_version: 2, typeColors: state.typeColors, globalVendors: state.globalVendors || [], project: projCopy };
   try {
@@ -1466,11 +1500,13 @@ async function handleImport(e) {
         delete f._data; delete f.data;
       }
 
-      // Cable run map
-      const crFile = zip.file('media/cablemap');
-      if (crFile && p.cableRunMap) {
-        await _idbSavePhotoData('cablemap_' + p.id, await crFile.async('text'));
-        p.cableRunMap.image = null;
+      // Cable run maps (multi-map or legacy single)
+      for (const m of (p.cableRunMaps || [])) {
+        const crFile = zip.file('media/cablemap_' + m.id) || (p._crLegacyMapId === m.id ? zip.file('media/cablemap') : null);
+        if (crFile) {
+          await _idbSavePhotoData('cablemap_' + p.id + '_' + m.id, await crFile.async('text'));
+          m.image = null;
+        }
       }
 
     } else {
@@ -1533,15 +1569,17 @@ async function handleImport(e) {
         delete f._data;
       }
 
-      // Cable run map
-      if (useStreaming && p.cableRunMap?.image?.startsWith?.('_import_temp_')) {
-        const d = await _idbGetPhotoData(p.cableRunMap.image);
-        if (d) await _idbSavePhotoData('cablemap_' + p.id, d);
-        await _idbDeletePhotoData(p.cableRunMap.image);
-        p.cableRunMap.image = null;
-      } else if (p.cableRunMap?.image) {
-        await _idbSavePhotoData('cablemap_' + p.id, p.cableRunMap.image);
-        p.cableRunMap.image = null;
+      // Cable run maps
+      for (const m of (p.cableRunMaps || [])) {
+        if (useStreaming && m.image?.startsWith?.('_import_temp_')) {
+          const d = await _idbGetPhotoData(m.image);
+          if (d) await _idbSavePhotoData('cablemap_' + p.id + '_' + m.id, d);
+          await _idbDeletePhotoData(m.image);
+          m.image = null;
+        } else if (m.image) {
+          await _idbSavePhotoData('cablemap_' + p.id + '_' + m.id, m.image);
+          m.image = null;
+        }
       }
 
       if (useStreaming) await _cleanupImportTemp(streamTempCount);
