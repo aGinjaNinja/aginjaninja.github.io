@@ -1,43 +1,21 @@
-const CACHE_NAME = 'netrack-v3';
+const CACHE_NAME = 'netrack-v23';
 
 const ASSETS = [
   '/',
   '/index.html',
-  '/dashboard.html',
-  '/devices.html',
-  '/racks.html',
-  '/ports.html',
-  '/photos.html',
-  '/cableruns.html',
-  '/checklist.html',
-  '/flowchart.html',
-  '/log.html',
-  '/scan.html',
-  '/settings.html',
-  '/sitemap.html',
-  '/fieldmode.html',
   '/css/styles.css',
   '/js/core.js',
-  '/js/layout.js',
   '/js/gdrive.js',
-  '/js/projects.js',
-  '/js/dashboard.js',
-  '/js/devices.js',
-  '/js/racks.js',
-  '/js/ports.js',
+  '/js/ui.js',
+  '/js/inventory.js',
+  '/js/rackports.js',
   '/js/photos.js',
-  '/js/cableruns.js',
-  '/js/checklist.js',
-  '/js/flowchart.js',
-  '/js/log.js',
-  '/js/scan.js',
-  '/js/settings.js',
   '/js/sitemap.js',
-  '/js/fieldmode.js',
-  '/js/timelog.js',
-  '/js/vendors.js',
-  '/js/print.js',
+  '/js/search.js',
+  '/js/report.js',
   '/img/logo.jpg',
+  '/img/icon-192.png',
+  '/img/icon-512.png',
   '/manifest.json',
 ];
 
@@ -69,7 +47,6 @@ self.addEventListener('fetch', e => {
   const isCode = url.pathname.endsWith('.js') || url.pathname.endsWith('.html') || url.pathname.endsWith('.css') || e.request.mode === 'navigate';
 
   if (isCode) {
-    // Network-first: always try fresh copy, fall back to cache offline
     e.respondWith(
       fetch(e.request).then(resp => {
         if (resp.ok) {
@@ -80,7 +57,6 @@ self.addEventListener('fetch', e => {
       }).catch(() => caches.match(e.request).then(c => c || (e.request.mode === 'navigate' ? caches.match('/index.html') : undefined)))
     );
   } else {
-    // Cache-first for images, manifest, etc.
     e.respondWith(
       caches.match(e.request).then(cached => {
         if (cached) return cached;

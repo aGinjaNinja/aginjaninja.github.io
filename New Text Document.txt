@@ -1,0 +1,4 @@
+When creating a new device, add device type "Other"
+
+On the phone app, on ports tab, i don't want to have to scroll sideways to select a device to modify the ports on.
+

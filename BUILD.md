@@ -1,5 +1,10 @@
 # Building the Android App
 
+> **Note (July 2026):** The app was consolidated to a compact single-page build:
+> one `index.html` + 6 JS files (`core`, `ui`, `inventory`, `rackports`, `photos`, `gdrive`).
+> The original 21-module source is preserved in `_legacy_backup/` if an old feature
+> ever needs to be restored.
+
 ## Prerequisites
 
 - **Node.js** 18+ and npm
