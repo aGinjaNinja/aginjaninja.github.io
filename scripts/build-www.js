@@ -19,12 +19,7 @@ dirs.forEach(d => {
 });
 
 // Root files to copy
-const files = [
-  'index.html', 'app.html', 'dashboard.html', 'devices.html', 'racks.html',
-  'ports.html', 'photos.html', 'cableruns.html', 'checklist.html',
-  'flowchart.html', 'log.html', 'scan.html', 'settings.html',
-  'sitemap.html', 'fieldmode.html', 'manifest.json', 'sw.js'
-];
+const files = ['index.html', 'manifest.json', 'sw.js'];
 files.forEach(f => {
   const src = path.join(ROOT, f);
   if (fs.existsSync(src)) {
