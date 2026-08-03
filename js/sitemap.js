@@ -1,996 +1,930 @@
-const LOCATION_TYPES = ['building','floor','room'];
+// ═══════════════════════════════════════════
+//  SITE MAPS — floor plans, rack placement,
+//  cable-run drawing, symbols & text
+//  Data: p.siteMapFloors[] { id, name, thumb,
+//    markers[], cableLines[], symbols[], texts[] }
+//  Images in IDB: sitemap_<projectId>_<floorId>
+// ═══════════════════════════════════════════
 
-function manageLocations() {
-  const p = getProject();
-  if (!p.locations) p.locations=[];
-  const locs = p.locations;
-  openModal(`
-    <h3>📍 Location Hierarchy</h3>
-    <p style="color:var(--text2);font-size:12px;margin-bottom:14px">Define buildings, floors, and rooms for structured location tracking.</p>
-    <div style="max-height:300px;overflow-y:auto;margin-bottom:12px">
-      ${locs.length===0?`<div style="color:var(--text3);font-size:12px;padding:8px">No locations defined yet.</div>`:
-        locs.map(l=>{
-          const parent = locs.find(x=>x.id===l.parentId);
-          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px">
-            <span style="font-size:10px;background:var(--card2);border:1px solid var(--border2);border-radius:3px;padding:1px 5px;font-family:var(--mono)">${esc(l.type||'')}</span>
-            <span style="flex:1">${esc(l.name||'')}</span>
-            ${parent?`<span style="font-size:11px;color:var(--text3)">↳ ${esc(parent.name)}</span>`:''}
-            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteLocation('${l.id}')">✕</button>
-          </div>`;
-        }).join('')}
-    </div>
-    <div style="border-top:1px solid var(--border);padding-top:12px">
-      <div class="form-row-inline">
-        <div class="form-row" style="flex:2"><label>Name</label>
-          <input class="form-control" id="loc-name" placeholder="Server Room A"></div>
-        <div class="form-row"><label>Type</label>
-          <select class="form-control" id="loc-type">
-            ${LOCATION_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}
-          </select></div>
-      </div>
-      <div class="form-row"><label>Parent (optional)</label>
-        <select class="form-control" id="loc-parent">
-          <option value="">— None —</option>
-          ${locs.map(l=>`<option value="${l.id}">${esc(l.name)} (${l.type})</option>`).join('')}
-        </select></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-      <button class="btn btn-primary" onclick="addLocation()">+ Add Location</button>
-    </div>`, '500px');
-}
+const SM_SYMBOLS = {
+  floorup:   { icon: '⬆', label: 'Floor Up' },
+  floordown: { icon: '⬇', label: 'Floor Down' },
+  conduit:   { icon: '▭', label: 'Conduit' }
+};
 
-function addLocation() {
-  const name = document.getElementById('loc-name')?.value?.trim();
-  if (!name) return toast('Name is required','error');
+let _smFloorId = null;
+let _smMode = 'view';            // view | draw | text | sym:<type> | rack:<id>
+let _smColor = '#00c8ff';
+let _smDraft = null;             // { points:[{x,y}] } while drawing
+let _smPendingRun = null;        // cable run id waiting to be mapped
+let _smUndo = [];                // [{kind:'line'|'symbol'|'text'|'marker', id}]
+let _smZoom = 1, _smPan = { x: 0, y: 0 };
+let _smDragP = null, _smPinch = null, _smLastTap = 0, _smMoved = false;
+let _smElDrag = null;            // dragging a placed element
+let _smAddName = '';             // pending name for new map image
+
+function _smFloors() {
   const p = getProject();
-  if (!p.locations) p.locations=[];
-  p.locations.push({
-    id:genId(), name,
-    type: document.getElementById('loc-type')?.value||'room',
-    parentId: document.getElementById('loc-parent')?.value||null,
-    notes:''
+  if (!p.siteMapFloors) p.siteMapFloors = [];
+  p.siteMapFloors.forEach(f => {
+    if (!f.markers) f.markers = [];
+    if (!f.cableLines) f.cableLines = [];
+    if (!f.symbols) f.symbols = [];
+    if (!f.texts) f.texts = [];
   });
-  logChange(`Location added: ${name}`);
-  save(); manageLocations();
+  return p.siteMapFloors;
 }
-
-function deleteLocation(id) {
-  const p=getProject();
-  const l=(p.locations||[]).find(x=>x.id===id);
-  if(l) logChange(`Location deleted: ${l.name}`);
-  p.locations=(p.locations||[]).filter(x=>x.id!==id&&x.parentId!==id);
-  save(); manageLocations();
-}
+function _smFloor() { return _smFloors().find(f => f.id === _smFloorId) || null; }
+function _smImgKey(floorId) { return 'sitemap_' + getProject().id + '_' + floorId; }
 
 // ═══════════════════════════════════════════
-//  FEATURE 13: SITE MAP (Multi-Floor)
+//  PHOTOS-PAGE SECTION
 // ═══════════════════════════════════════════
-let _smPan={x:0,y:0},_smZoom=1;
-let _smDragging=false,_smDragStart={x:0,y:0},_smPanStart={x:0,y:0},_smDragMoved=false;
-let _smOverlay='markers';
-let _smEditMode=false;
-let _smDrawing=false;
-let _smCurrentLine=null;
-let _smMarkerDrag=null;
-let _smTouchPan=null,_smPinch=null;
-let _smCurrentFloorId=null;
-
-function _smApplyTransform() {
-  const pan=document.getElementById('sm-pan');
-  if(pan) pan.style.transform=`translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})`;
-}
-
-// ── Multi-floor helpers ──
-
-function _smEnsureFloors(p) {
-  if (p.siteMapFloors) return;
-  if (p.siteMap) {
-    const floorId = genId();
-    p.siteMapFloors = [{
-      id: floorId, name: 'Floor 1',
-      markers: p.siteMap.markers || [],
-      cableLines: p.siteMap.cableLines || []
-    }];
-    p._smLegacyFloorId = floorId;
-    delete p.siteMap;
-  } else {
-    p.siteMapFloors = [];
-  }
-}
-
-function _smGetFloor(p) {
-  _smEnsureFloors(p);
-  if (!p.siteMapFloors.length) return null;
-  let floor = _smCurrentFloorId ? p.siteMapFloors.find(f => f.id === _smCurrentFloorId) : null;
-  if (!floor) { floor = p.siteMapFloors[0]; _smCurrentFloorId = floor.id; }
-  if (!floor.markers) floor.markers = [];
-  if (!floor.cableLines) floor.cableLines = [];
-  return floor;
-}
-
-async function _smLoadFloorImage(p, floor) {
-  if (floor._data) return floor._data;
-  let data = await _lazyGetPhotoData('sitemap_' + p.id + '_' + floor.id);
-  if (!data && p._smLegacyFloorId === floor.id) {
-    data = await _lazyGetPhotoData('sitemap_' + p.id);
-    if (data) {
-      await _idbSavePhotoData('sitemap_' + p.id + '_' + floor.id, data);
-      _idbDeletePhotoData('sitemap_' + p.id).catch(()=>{});
-      delete p._smLegacyFloorId;
-    }
-  }
-  if (data) floor._data = data;
-  return data;
-}
-
-// ── Floor management ──
-
-function smSelectFloor(id) {
-  _smCurrentFloorId = id;
-  _smPan={x:0,y:0}; _smZoom=1;
-  _smDrawing=false; _smCurrentLine=null;
-  renderSiteMap();
-}
-
-function smAddFloor() {
-  openModal(`
-    <h3>Add Floor</h3>
-    <div class="form-row"><label>Floor Name</label>
-      <input class="form-control" id="sm-floor-name" placeholder="e.g. Floor 2, Basement, Roof" autofocus></div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="smSaveNewFloor()">Add Floor</button>
-    </div>`);
-  setTimeout(()=>document.getElementById('sm-floor-name')?.focus(),50);
-}
-
-function smSaveNewFloor() {
-  const name = document.getElementById('sm-floor-name')?.value?.trim();
-  if (!name) return toast('Floor name is required','error');
-  const p = getProject();
-  _smEnsureFloors(p);
-  const floor = { id: genId(), name, markers: [], cableLines: [] };
-  p.siteMapFloors.push(floor);
-  _smCurrentFloorId = floor.id;
-  logChange(`Floor added: ${name}`);
-  save(); closeModal(); renderSiteMap();
-  toast('Floor added — upload a floor plan image','success');
-}
-
-function smRenameFloor(id) {
-  const p = getProject();
-  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
-  if (!floor) return;
-  openModal(`
-    <h3>Rename Floor</h3>
-    <div class="form-row"><label>Floor Name</label>
-      <input class="form-control" id="sm-floor-rename" value="${esc(floor.name)}" autofocus></div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="smSaveRenameFloor('${id}')">Save</button>
-    </div>`);
-  setTimeout(()=>{const el=document.getElementById('sm-floor-rename');if(el){el.focus();el.select();}},50);
-}
-
-function smSaveRenameFloor(id) {
-  const name = document.getElementById('sm-floor-rename')?.value?.trim();
-  if (!name) return toast('Name is required','error');
-  const p = getProject();
-  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
-  if (!floor) return;
-  floor.name = name;
-  logChange(`Floor renamed: ${name}`);
-  save(); closeModal(); renderSiteMap();
-}
-
-function smDeleteFloor(id) {
-  const p = getProject();
-  const floor = (p.siteMapFloors||[]).find(f=>f.id===id);
-  if (!floor) return;
-  if (!confirm(`Delete "${floor.name}"? This will remove its map, markers, and cable runs.`)) return;
-  _idbDeletePhotoData('sitemap_' + p.id + '_' + floor.id).catch(()=>{});
-  p.siteMapFloors = p.siteMapFloors.filter(f=>f.id!==id);
-  if (_smCurrentFloorId === id) _smCurrentFloorId = p.siteMapFloors[0]?.id || null;
-  logChange(`Floor deleted: ${floor.name}`);
-  save(); renderSiteMap();
-}
-
-// ── Render ──
-
-async function renderSiteMap() {
-  const p = getProject();
-  _smEnsureFloors(p);
-  const floor = _smGetFloor(p);
-
-  if (floor) await _smLoadFloorImage(p, floor);
-
-  const hasImage = floor && floor._data;
-  const floors = p.siteMapFloors;
-
-  const floorTabsHtml = floors.length > 0 ? `
-    <div class="sm-floor-tabs">
-      ${floors.map(f => `
-        <div class="sm-floor-tab ${f.id === _smCurrentFloorId ? 'active' : ''}" onclick="smSelectFloor('${f.id}')">
-          <span>${esc(f.name)}</span>
-          ${_smEditMode && floors.length > 1 ? `<span class="sm-floor-tab-x" onclick="event.stopPropagation();smDeleteFloor('${f.id}')" title="Delete floor">✕</span>` : ''}
-        </div>
-      `).join('')}
-      <div class="sm-floor-tab sm-floor-add" onclick="smAddFloor()" title="Add floor">+</div>
-      ${_smEditMode && floor ? `<div class="sm-floor-tab sm-floor-rename" onclick="smRenameFloor('${floor.id}')" title="Rename floor">✎</div>` : ''}
-    </div>` : '';
-
-  setTopbarActions(`
-    <select class="form-control" style="width:160px;padding:4px 8px;font-size:12px" onchange="smSetOverlay(this.value)">
-      <option value="markers" ${_smOverlay==='markers'?'selected':''}>📍 Site Map</option>
-      <option value="cableruns" ${_smOverlay==='cableruns'?'selected':''}>⇄ Cable Runs</option>
-    </select>
-    <button class="btn btn-sm ${_smEditMode?'btn-primary':'btn-ghost'}" onclick="smToggleEdit()"
-      style="${_smEditMode?'border-color:var(--amber);background:rgba(255,170,0,.15);color:var(--amber)':''}"
-      title="${_smEditMode?'Click to exit edit mode':'Click to enable edit mode'}">
-      ${_smEditMode?'🔓 Edit Mode ON':'🔒 View Only'}
-    </button>
-    ${hasImage?`<button class="btn btn-ghost btn-sm" onclick="clearSiteMap()">✕ Clear Map</button>`:''}
-    ${floor && !floor._data?`<label class="btn btn-primary btn-sm" style="cursor:pointer">📁 Upload Floor Plan<input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)"></label>`:''}
-  `);
-
-  if (!floor) {
-    document.getElementById('view-area').innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">🗺</div>
-        <h3>No floor plans</h3>
-        <p>Add a floor and upload a floor plan image to get started.</p>
-        <br>
-        <button class="btn btn-primary" onclick="smAddFloor()">+ Add Floor</button>
-      </div>`;
-    return;
-  }
-
-  if (!floor._data) {
-    document.getElementById('view-area').innerHTML = `
-      ${floorTabsHtml}
-      <div class="empty-state">
-        <div class="empty-icon">🗺</div>
-        <h3>No floor plan for ${esc(floor.name)}</h3>
-        <p>Upload a floor plan image to place markers for racks, rooms, and equipment.</p>
-        <br>
-        <label class="btn btn-primary" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px">
-          📁 Upload Floor Plan
-          <input type="file" accept="image/*" style="display:none" onchange="uploadSiteMap(event)">
-        </label>
-      </div>`;
-    return;
-  }
-
-  const markers = floor.markers;
-  const cableLines = floor.cableLines;
-  const isMarkers = _smOverlay==='markers';
-  const canEdit = _smEditMode;
-
-  // Build SVG cable lines layer
-  const svgLines = cableLines.map(line => {
-    if (!line.points || line.points.length < 2) return '';
-    const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    const color = line.color || '#ffaa00';
-    return `<g onclick="event.stopPropagation();smCableLineClick('${line.id}')" style="cursor:pointer">
-      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
-      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
-      ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="3" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1" pointer-events="none">${esc(line.label)}</text>`; })() : ''}
-    </g>`;
-  }).join('');
-
-  const drawingLine = (_smDrawing && _smCurrentLine && _smCurrentLine.points.length > 0) ? (() => {
-    const pts = _smCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    return `<path d="${pts}" stroke="${_smCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
-  })() : '';
-
-  const cursor = !canEdit ? 'grab' : 'crosshair';
-
-  // Build marker HTML
-  const markersHtml = markers.map(m => {
-    const sz = m.size || 1;
-    const dragAttr = canEdit ? `onmousedown="event.stopPropagation();smMarkerDragStart(event,'${m.id}')" ontouchstart="event.stopPropagation();smMarkerDragStart(event,'${m.id}')"` : '';
-    if (m.type === 'idf') {
-      return `<div class="sitemap-idf" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-50%) scale(${sz})"
-        data-marker-id="${m.id}" ${dragAttr}
-        onclick="event.stopPropagation();smMarkerClick('${m.id}')">
-        <div class="sitemap-idf-box" style="border-color:${m.color||'#00c8ff'}">🗄</div>
-        <div class="sitemap-idf-name" style="color:${m.color||'#00c8ff'}">${esc(m.label)}</div>
-      </div>`;
-    }
-    return `<div class="sitemap-marker" style="left:${m.x}%;top:${m.y}%;pointer-events:all;transform:translate(-50%,-100%) scale(${sz});transform-origin:bottom center"
-      data-marker-id="${m.id}" ${dragAttr}
-      title="${esc(m.label)}" onclick="event.stopPropagation();smMarkerClick('${m.id}')">
-      <div class="sitemap-label">${esc(m.label)}</div>
-      <div class="sitemap-pin" style="background:${m.color||'#00c8ff'}"></div>
-    </div>`;
-  }).join('');
-
-  // IDF closets sidebar — check placement across ALL floors
-  const allPlacedRackIds = new Set();
-  p.siteMapFloors.forEach(f => (f.markers || []).forEach(m => { if (m.rackId) allPlacedRackIds.add(m.rackId); }));
-  const racks = p.racks || [];
-  const idfSidebar = isMarkers && racks.length > 0 ? `
-    <div style="margin-bottom:12px">
-      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">IDF Closets (${racks.length})</div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:6px">${canEdit ? 'Drag onto map to place' : 'Enable Edit Mode to place'}</div>
-      ${racks.map(r => {
-        const placed = allPlacedRackIds.has(r.id);
-        return `<div class="sm-idf-sidebar-item ${placed ? 'placed' : ''}"
-          ${canEdit && !placed ? `onmousedown="smStartIdfDrag(event,'${r.id}')" ontouchstart="smStartIdfDrag(event,'${r.id}')"` : ''}
-          style="cursor:${canEdit && !placed ? 'grab' : 'default'}">
-          <span style="font-size:14px">🗄</span>
-          <span style="flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
-          ${placed ? '<span style="font-size:10px;color:var(--accent)">✓</span>' : ''}
-          ${r.location ? `<span style="font-size:9px;color:var(--text3)">${esc(r.location)}</span>` : ''}
-        </div>`;
-      }).join('')}
+function siteMapsSectionHtml() {
+  const floors = _smFloors();
+  const cards = floors.map(f => `
+    <div class="sm-card" onclick="openMapStudio('${f.id}')">
+      <div class="sm-card-thumb" style="${f.thumb ? `background-image:url('${f.thumb}')` : ''}">${f.thumb ? '' : '🗺'}</div>
+      <div class="sm-card-name">${esc(f.name)}</div>
+    </div>`).join('');
+  return `
+    <div class="section-hdr" style="margin-top:4px">
+      <span class="sh-title">🗺 Site Maps & Floor Plans</span>
+      <button class="btn btn-ghost btn-sm" onclick="smAddMapFlow()">+ Map</button>
     </div>
-    <div style="border-top:1px solid var(--border);margin-bottom:8px"></div>
-  ` : '';
-
-  document.getElementById('view-area').innerHTML = `
-    ${floorTabsHtml}
-    <div style="display:flex;gap:14px;height:calc(100vh - 165px)">
-      <div style="flex:1;position:relative">
-        ${canEdit ? `<div class="sm-edit-badge">✎ EDIT MODE${!isMarkers ? (_smDrawing ? ' · DRAWING — click to add points, dbl-click to finish' : ' · Click to start a cable run') : ' · Dbl-click map to place marker'}</div>` : ''}
-        ${canEdit && !isMarkers && _smDrawing ? `<div class="sm-drawing-hint">Click: add point &nbsp;|&nbsp; Double-click: finish &nbsp;|&nbsp; ESC: cancel</div>` : ''}
-        <div id="sm-canvas" class="sitemap-canvas ${canEdit?'edit-mode':''}"
-          style="width:100%;height:calc(100vh - 185px);cursor:${cursor};user-select:none"
-          onmousedown="smMouseDown(event)" onmousemove="smMouseMove(event)" onmouseup="smMouseUp(event)"
-          onclick="smCanvasClick(event)"
-          ondblclick="smDblClick(event)" onwheel="smWheel(event)"
-          ontouchstart="smTouchStart(event)" ontouchmove="smTouchMove(event)" ontouchend="smTouchEnd(event)">
-          <div id="sm-pan" style="position:absolute;top:0;left:0;transform-origin:0 0;transform:translate(${_smPan.x}px,${_smPan.y}px) scale(${_smZoom})">
-            <img id="sm-img" src="${floor._data}" style="display:block;max-width:none;pointer-events:none" draggable="false">
-            <svg id="sm-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;pointer-events:none"
-              viewBox="0 0 100 100" preserveAspectRatio="none">
-              ${svgLines}
-              ${drawingLine}
-            </svg>
-            <div id="sm-markers" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">
-              ${markersHtml}
-            </div>
-          </div>
-        </div>
-        <div style="position:absolute;bottom:8px;left:8px;display:flex;gap:4px">
-          <button class="btn btn-ghost btn-sm" onclick="smZoomIn()">+</button>
-          <button class="btn btn-ghost btn-sm" onclick="smZoomOut()">−</button>
-          <button class="btn btn-ghost btn-sm" onclick="smResetView()">⟳</button>
-        </div>
-      </div>
-      <div style="width:210px;flex-shrink:0;overflow-y:auto">
-        ${idfSidebar}
-        ${isMarkers ? `
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Markers (${markers.length})</div>
-            ${canEdit?`<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="addSiteMapMarker()">+ Add</button>`:''}
-          </div>
-          ${markers.map(m=>`
-            <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smMarkerClick('${m.id}')">
-              ${m.type==='idf'
-                ? `<span style="font-size:14px">🗄</span>`
-                : `<span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#00c8ff'};flex-shrink:0;transform:scale(${m.size||1})"></span>`
-              }
-              <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.label)}</span>
-              ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteSmMarker('${m.id}')" style="font-size:10px;padding:2px 5px">✕</button>`:''}
-            </div>`).join('')}
-          ${markers.length===0?`<div style="color:var(--text3);font-size:12px">${canEdit?'Double-click the map to place a marker.':'Enable Edit Mode to add markers.'}</div>`:''}
-        ` : `
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Cable Runs (${cableLines.length})</div>
-            ${canEdit&&!_smDrawing?`<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="smStartCableLine()">+ Draw</button>`:''}
-            ${canEdit&&_smDrawing?`<button class="btn btn-danger btn-sm" style="font-size:10px;padding:2px 8px" onclick="smCancelCableLine()">Cancel</button>`:''}
-          </div>
-          ${cableLines.map(line=>`
-            <div style="padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px;margin-bottom:5px;cursor:pointer;display:flex;align-items:center;gap:7px" onclick="smCableLineClick('${line.id}')">
-              <span style="width:18px;height:3px;border-radius:2px;background:${line.color||'#ffaa00'};flex-shrink:0"></span>
-              <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(line.label||'Cable Run')}</span>
-              ${canEdit?`<button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();smDeleteCableLine('${line.id}')" style="font-size:10px;padding:2px 5px">✕</button>`:''}
-            </div>`).join('')}
-          ${cableLines.length===0?`<div style="color:var(--text3);font-size:12px">${canEdit?'Click "+ Draw" then click the map to trace a cable run. Double-click to finish.':'Enable Edit Mode to draw cable runs.'}</div>`:''}
-        `}
-      </div>
+    <div class="sm-strip">
+      ${cards || `<div class="sm-card sm-card-empty" onclick="smAddMapFlow()"><div class="sm-card-thumb">＋</div><div class="sm-card-name">Add floor plan</div></div>`}
     </div>`;
 }
 
-function uploadSiteMap(e) {
+// ── Add a new map (name + image) ──
+function smAddMapFlow() {
+  openModal(`
+    <h3>🗺 New Site Map</h3>
+    <div class="form-row"><label>Name *</label>
+      <input class="form-control" id="sm-new-name" placeholder="e.g. Lodge Floor 1" autofocus></div>
+    <p style="font-size:12.5px;color:var(--text2);margin-bottom:6px">Pick a floor plan image — a photo of a blueprint works great.</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smPickMapImage()">📁 Choose Image</button>
+    </div>`);
+  setTimeout(() => document.getElementById('sm-new-name')?.focus(), 50);
+}
+
+function smPickMapImage() {
+  const name = document.getElementById('sm-new-name')?.value?.trim();
+  if (!name) return toast('Enter a name first', 'error');
+  _smAddName = name;
+  document.getElementById('sitemap-upload')?.click();
+}
+
+async function handleSiteMapUpload(e) {
   const file = e.target.files[0];
+  e.target.value = '';
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async ev => {
-    const p = getProject();
-    const floor = _smGetFloor(p);
-    if (!floor) return toast('Add a floor first','error');
-    const dataUrl = ev.target.result;
-    await _idbSavePhotoData('sitemap_' + p.id + '_' + floor.id, dataUrl);
-    floor._data = dataUrl;
-    _smPan={x:0,y:0}; _smZoom=1;
-    logChange(`Floor plan uploaded: ${floor.name}`);
-    save(); renderSiteMap(); toast('Floor plan uploaded','success');
-  };
-  reader.readAsDataURL(file);
-}
-
-function clearSiteMap() {
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  if (!floor) return;
-  if (!confirm(`Clear the floor plan for "${floor.name}"? Markers will be kept.`)) return;
-  floor._data = null;
-  _idbDeletePhotoData('sitemap_' + p.id + '_' + floor.id).catch(() => {});
-  logChange(`Floor plan cleared: ${floor.name}`);
-  save(); renderSiteMap();
-}
-
-// ── Pan & Zoom (mouse) ──
-
-function smMouseDown(e) {
-  if (e.button!==0) return;
-  _smDragging=true;
-  _smDragMoved=false;
-  _smDragStart={x:e.clientX,y:e.clientY};
-  _smPanStart={..._smPan};
-  document.getElementById('sm-canvas').style.cursor='grabbing';
-}
-
-function smMouseMove(e) {
-  if(!_smDragging) return;
-  const dx=e.clientX-_smDragStart.x, dy=e.clientY-_smDragStart.y;
-  if(Math.abs(dx)>3||Math.abs(dy)>3) _smDragMoved=true;
-  _smPan.x=_smPanStart.x+dx;
-  _smPan.y=_smPanStart.y+dy;
-  _smApplyTransform();
-}
-
-function smMouseUp(e) {
-  _smDragging=false;
-  const c=document.getElementById('sm-canvas');
-  if(c) c.style.cursor=_smEditMode?'crosshair':'grab';
-}
-
-function smWheel(e) {
-  e.preventDefault();
-  const canvas=document.getElementById('sm-canvas');
-  if(!canvas) return;
-  const rect=canvas.getBoundingClientRect();
-  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-  const delta=e.deltaY<0?1.1:0.9;
-  const newZoom=Math.max(0.2,Math.min(5,_smZoom*delta));
-  _smPan.x=mx-(mx-_smPan.x)*(newZoom/_smZoom);
-  _smPan.y=my-(my-_smPan.y)*(newZoom/_smZoom);
-  _smZoom=newZoom;
-  _smApplyTransform();
-}
-
-function smZoomIn() {
-  const canvas=document.getElementById('sm-canvas');
-  if(!canvas) return;
-  const cx=canvas.offsetWidth/2, cy=canvas.offsetHeight/2;
-  const newZoom=Math.min(5,_smZoom*1.2);
-  _smPan.x=cx-(cx-_smPan.x)*(newZoom/_smZoom);
-  _smPan.y=cy-(cy-_smPan.y)*(newZoom/_smZoom);
-  _smZoom=newZoom;
-  _smApplyTransform();
-}
-
-function smZoomOut() {
-  const canvas=document.getElementById('sm-canvas');
-  if(!canvas) return;
-  const cx=canvas.offsetWidth/2, cy=canvas.offsetHeight/2;
-  const newZoom=Math.max(0.2,_smZoom/1.2);
-  _smPan.x=cx-(cx-_smPan.x)*(newZoom/_smZoom);
-  _smPan.y=cy-(cy-_smPan.y)*(newZoom/_smZoom);
-  _smZoom=newZoom;
-  _smApplyTransform();
-}
-
-function smResetView() {
-  _smPan={x:0,y:0};_smZoom=1;_smApplyTransform();
-}
-
-// ── Pan & Zoom (touch) ──
-
-function smTouchStart(e) {
-  if (e.touches.length===1) {
-    const t=e.touches[0];
-    const el=document.elementFromPoint(t.clientX,t.clientY);
-    if(el?.closest?.('[data-marker-id]')) return;
-    e.preventDefault();
-    _smTouchPan={startX:t.clientX,startY:t.clientY,origX:_smPan.x,origY:_smPan.y,moved:false,startTime:Date.now()};
-    _smPinch=null;
-  } else if (e.touches.length===2) {
-    e.preventDefault();
-    _smTouchPan=null;
-    const dx=e.touches[0].clientX-e.touches[1].clientX;
-    const dy=e.touches[0].clientY-e.touches[1].clientY;
-    const canvas=document.getElementById('sm-canvas');
-    const rect=canvas?canvas.getBoundingClientRect():{left:0,top:0};
-    const midX=(e.touches[0].clientX+e.touches[1].clientX)/2-rect.left;
-    const midY=(e.touches[0].clientY+e.touches[1].clientY)/2-rect.top;
-    _smPinch={startDist:Math.hypot(dx,dy),startZoom:_smZoom,startPanX:_smPan.x,startPanY:_smPan.y,midX,midY};
-  }
-}
-
-function smTouchMove(e) {
-  e.preventDefault();
-  if(e.touches.length===1&&_smTouchPan) {
-    const t=e.touches[0];
-    const dx=t.clientX-_smTouchPan.startX, dy=t.clientY-_smTouchPan.startY;
-    if(Math.abs(dx)>5||Math.abs(dy)>5) _smTouchPan.moved=true;
-    if(!_smTouchPan.moved) return;
-    _smPan.x=_smTouchPan.origX+dx;
-    _smPan.y=_smTouchPan.origY+dy;
-    _smApplyTransform();
-  } else if(e.touches.length===2&&_smPinch) {
-    const dx=e.touches[0].clientX-e.touches[1].clientX;
-    const dy=e.touches[0].clientY-e.touches[1].clientY;
-    const newZoom=Math.max(0.2,Math.min(5,_smPinch.startZoom*Math.hypot(dx,dy)/_smPinch.startDist));
-    _smPan.x=_smPinch.midX-(_smPinch.midX-_smPinch.startPanX)*(newZoom/_smPinch.startZoom);
-    _smPan.y=_smPinch.midY-(_smPinch.midY-_smPinch.startPanY)*(newZoom/_smPinch.startZoom);
-    _smZoom=newZoom;
-    _smApplyTransform();
-  }
-}
-
-function smTouchEnd(e) {
-  if(_smTouchPan&&!_smTouchPan.moved&&e.changedTouches.length===1) {
-    const t=e.changedTouches[0];
-    if(_smEditMode&&Date.now()-_smTouchPan.startTime<400) {
-      smCanvasClick({clientX:t.clientX,clientY:t.clientY,stopPropagation:()=>{}});
-    }
-  }
-  if(e.touches.length<2) _smPinch=null;
-  if(e.touches.length===0) _smTouchPan=null;
-}
-
-// ── Edit-mode interactions ──
-
-function smDblClick(e) {
-  if(_smDragMoved) return;
-  const p=getProject();
-  const floor=_smGetFloor(p);
-  if(!floor?._data) return;
-  if(!_smEditMode) return;
-  if(_smOverlay==='cableruns') {
-    if(_smDrawing && _smCurrentLine) {
-      const pt = smEventToImgPct(e);
-      if(pt) _smCurrentLine.points.push(pt);
-      smFinishCableLine();
-    } else {
-      smStartCableLine();
-      const pt = smEventToImgPct(e);
-      if(pt) _smCurrentLine.points.push(pt);
-    }
-    return;
-  }
-  const img=document.getElementById('sm-img');
-  if(!img) return;
-  const rect=img.getBoundingClientRect();
-  const xPct=((e.clientX-rect.left)/rect.width*100).toFixed(2);
-  const yPct=((e.clientY-rect.top)/rect.height*100).toFixed(2);
-  openSmMarkerModal(null,xPct,yPct);
-}
-
-function addSiteMapMarker() {
-  openSmMarkerModal(null,'50','50');
-}
-
-function smSetOverlay(val) { _smOverlay=val; _smDrawing=false; _smCurrentLine=null; renderSiteMap(); }
-function smToggleEdit() { _smEditMode=!_smEditMode; if(!_smEditMode){_smDrawing=false;_smCurrentLine=null;} renderSiteMap(); }
-
-function smCanvasClick(e) {
-  if(_smDragMoved) return;
-  if(!_smEditMode) return;
-  if(_smOverlay!=='cableruns') return;
-  if(!_smDrawing||!_smCurrentLine) return;
-  const pt = smEventToImgPct(e);
-  if(!pt) return;
-  _smCurrentLine.points.push(pt);
-  smRedrawLines();
-}
-
-function smEventToImgPct(e) {
-  const img = document.getElementById('sm-img');
-  if (!img) return null;
-  const rect = img.getBoundingClientRect();
-  const x = parseFloat(((e.clientX - rect.left) / rect.width * 100).toFixed(2));
-  const y = parseFloat(((e.clientY - rect.top) / rect.height * 100).toFixed(2));
-  return { x, y };
-}
-
-function smRedrawLines() {
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  const cableLines = floor?.cableLines||[];
-  const svgLines = cableLines.map(line => {
-    if (!line.points || line.points.length < 2) return '';
-    const pts = line.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    const color = line.color || '#ffaa00';
-    return `<g onclick="event.stopPropagation();smCableLineClick('${line.id}')" style="cursor:pointer">
-      <path d="${pts}" stroke="${color}" stroke-width="0.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" pointer-events="stroke"/>
-      <path d="${pts}" stroke="transparent" stroke-width="3" fill="none" pointer-events="stroke"/>
-      ${line.label ? (() => { const mid = line.points[Math.floor(line.points.length/2)]; return `<text x="${mid.x}" y="${mid.y}" font-size="3" font-family="monospace" fill="${color}" text-anchor="middle" dy="-1">${esc(line.label)}</text>`; })() : ''}
-    </g>`;
-  }).join('');
-  const drawingLine = (_smDrawing && _smCurrentLine && _smCurrentLine.points.length > 0) ? (() => {
-    const pts = _smCurrentLine.points.map((pt,i) => `${i===0?'M':'L'} ${pt.x} ${pt.y}`).join(' ');
-    return `<path d="${pts}" stroke="${_smCurrentLine.color||'#ffaa00'}" stroke-width="0.5" fill="none" stroke-dasharray="2,1" opacity="0.7"/>`;
-  })() : '';
-  const svg = document.getElementById('sm-svg');
-  if (svg) svg.innerHTML = svgLines + drawingLine;
-}
-
-// ── Cable Lines ──
-
-function smStartCableLine() {
-  _smDrawing = true;
-  _smCurrentLine = { points: [], color: '#ffaa00', label: '' };
-  renderSiteMap();
-}
-
-function smCancelCableLine() {
-  _smDrawing = false;
-  _smCurrentLine = null;
-  renderSiteMap();
-}
-
-function smFinishCableLine() {
-  if (!_smCurrentLine || _smCurrentLine.points.length < 2) {
-    toast('Draw at least 2 points to create a cable run', 'error');
-    return;
-  }
-  const line = { ..._smCurrentLine };
-  _smDrawing = false;
-  _smCurrentLine = null;
-  openModal(`
-    <h3>Save Cable Run</h3>
-    <div class="form-row"><label>Label</label>
-      <input class="form-control" id="scl-label" placeholder="e.g. MDF to IDF-166" value="${esc(line.label||'')}" autofocus></div>
-    <div class="form-row-inline">
-      <div class="form-row"><label>Color</label>
-        <input type="color" class="form-control" id="scl-color" value="${line.color||'#ffaa00'}" style="height:38px;padding:4px"></div>
-      <div class="form-row"><label>Cable Type</label>
-        <select class="form-control" id="scl-type">
-          ${['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'].map(t=>`<option>${t}</option>`).join('')}
-        </select></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal();renderSiteMap()">Discard</button>
-      <button class="btn btn-primary" onclick="smSaveCableLine()">Save Run</button>
-    </div>
-  `);
-  setTimeout(()=>document.getElementById('scl-label')?.focus(),50);
-  window._smPendingLine = line;
-}
-
-function smSaveCableLine() {
-  const line = window._smPendingLine;
-  if (!line) return;
-  const label = document.getElementById('scl-label')?.value?.trim()||'';
-  const color = document.getElementById('scl-color')?.value||'#ffaa00';
-  const cableType = document.getElementById('scl-type')?.value||'';
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  if (!floor) return;
-  floor.cableLines.push({ id:genId(), points:line.points, label, color, cableType });
-  logChange(`Site map cable run added: ${label||'(unlabeled)'}`);
-  save(); closeModal(); window._smPendingLine=null; renderSiteMap();
-  toast('Cable run saved','success');
-}
-
-function smCableLineClick(id) {
-  if (!_smEditMode) return;
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  const line = (floor?.cableLines||[]).find(l=>l.id===id);
-  if (!line) return;
-  openModal(`
-    <h3>Edit Cable Run</h3>
-    <div class="form-row"><label>Label</label>
-      <input class="form-control" id="ecl-label" value="${esc(line.label||'')}" autofocus></div>
-    <div class="form-row-inline">
-      <div class="form-row"><label>Color</label>
-        <input type="color" class="form-control" id="ecl-color" value="${line.color||'#ffaa00'}" style="height:38px;padding:4px"></div>
-      <div class="form-row"><label>Type</label>
-        <select class="form-control" id="ecl-type">
-          ${['Cat5e','Cat6','Cat6A','Fiber SM','Fiber MM','Coax','Other'].map(t=>`<option ${line.cableType===t?'selected':''}>${t}</option>`).join('')}
-        </select></div>
-    </div>
-    <p style="font-size:11px;color:var(--text3)">${line.points.length} points</p>
-    <div class="modal-actions">
-      <button class="btn btn-danger btn-sm" onclick="smDeleteCableLine('${id}')" style="margin-right:auto">Delete</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="smUpdateCableLine('${id}')">Save</button>
-    </div>
-  `);
-  setTimeout(()=>document.getElementById('ecl-label')?.focus(),50);
-}
-
-function smUpdateCableLine(id) {
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  const line = (floor?.cableLines||[]).find(l=>l.id===id);
-  if (!line) return;
-  line.label = document.getElementById('ecl-label')?.value?.trim()||'';
-  line.color = document.getElementById('ecl-color')?.value||'#ffaa00';
-  line.cableType = document.getElementById('ecl-type')?.value||'';
-  save(); closeModal(); renderSiteMap(); toast('Cable run updated','success');
-}
-
-function smDeleteCableLine(id) {
-  const p = getProject();
-  const floor = _smGetFloor(p);
-  if (!floor) return;
-  floor.cableLines = floor.cableLines.filter(l=>l.id!==id);
-  logChange('Site map cable run deleted');
-  save(); closeModal(); renderSiteMap();
-}
-
-// ── Markers ──
-
-function openSmMarkerModal(id,xPct,yPct) {
-  const p=getProject();
-  const floor=_smGetFloor(p);
-  const m=id?(floor?.markers||[]).find(x=>x.id===id):null;
-  const rackOpts=`<option value="">— None —</option>`+
-    p.racks.map(r=>`<option value="${r.id}" ${m?.rackId===r.id?'selected':''}>${esc(r.name)}</option>`).join('');
-  const sz = m?.size||1;
-  openModal(`
-    <h3>${id?'Edit':'Place'} Marker</h3>
-    <div class="form-row"><label>Label *</label>
-      <input class="form-control" id="sm-label" value="${esc(m?.label||'')}" placeholder="Server Room A"></div>
-    <div class="form-row-inline">
-      <div class="form-row"><label>Type</label>
-        <select class="form-control" id="sm-type">
-          <option value="room" ${(m?.type||'room')==='room'?'selected':''}>Room</option>
-          <option value="rack" ${m?.type==='rack'?'selected':''}>Rack</option>
-          <option value="device" ${m?.type==='device'?'selected':''}>Device</option>
-          <option value="idf" ${m?.type==='idf'?'selected':''}>IDF Closet</option>
-        </select></div>
-      <div class="form-row"><label>Color</label>
-        <input type="color" class="form-control" id="sm-color" value="${m?.color||'#00c8ff'}" style="height:38px;padding:4px"></div>
-    </div>
-    <div class="form-row">
-      <label>Marker Size</label>
-      <div style="display:flex;align-items:center;gap:10px">
-        <input type="range" id="sm-size" min="0.5" max="3" step="0.1" value="${sz}" style="flex:1;accent-color:var(--accent)"
-          oninput="document.getElementById('sm-size-lbl').textContent=Math.round(this.value*100)+'%'">
-        <span id="sm-size-lbl" style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:36px">${Math.round(sz*100)}%</span>
-      </div>
-    </div>
-    <div class="form-row"><label>Linked Rack (optional)</label>
-      <select class="form-control" id="sm-rack">${rackOpts}</select></div>
-    <div class="modal-actions">
-      ${id?`<button class="btn btn-danger btn-sm" onclick="deleteSmMarker('${id}')" style="margin-right:auto">Delete</button>`:''}
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveSmMarker('${id||''}','${xPct||50}','${yPct||50}')">Save</button>
-    </div>`);
-  setTimeout(()=>document.getElementById('sm-label')?.focus(),50);
-}
-
-function saveSmMarker(id,xPct,yPct) {
-  const label=document.getElementById('sm-label')?.value?.trim();
-  if(!label) return toast('Label is required','error');
-  const p=getProject();
-  const floor=_smGetFloor(p);
-  if(!floor) return;
-  const data={
-    label, type:document.getElementById('sm-type')?.value||'room',
-    color:document.getElementById('sm-color')?.value||'#00c8ff',
-    size:parseFloat(document.getElementById('sm-size')?.value||1),
-    rackId:document.getElementById('sm-rack')?.value||null,
-  };
-  if(id){
-    const idx=floor.markers.findIndex(x=>x.id===id);
-    if(idx>=0) Object.assign(floor.markers[idx],data);
-    logChange(`Site map marker updated: ${label}`);
-  } else {
-    floor.markers.push({id:genId(),x:parseFloat(xPct),y:parseFloat(yPct),...data});
-    logChange(`Site map marker added: ${label}`);
-  }
-  save(); closeModal(); renderSiteMap(); toast(id?'Marker updated':'Marker added','success');
-}
-
-function deleteSmMarker(id) {
-  const p=getProject();
-  const floor=_smGetFloor(p);
-  if(!floor) return;
-  floor.markers=floor.markers.filter(x=>x.id!==id);
-  logChange('Site map marker deleted');
-  save(); closeModal(); renderSiteMap();
-}
-
-// ── Marker drag (reposition on canvas in edit mode) ──
-
-function smMarkerDragStart(e, markerId) {
-  if (!_smEditMode) return;
-  e.preventDefault();
-  const isTouch = e.type==='touchstart';
-  const startX = isTouch ? e.touches[0].clientX : e.clientX;
-  const startY = isTouch ? e.touches[0].clientY : e.clientY;
-  _smMarkerDrag = { markerId, startX, startY, moved: false };
-
-  const getXY = ev => isTouch
-    ? { x:(ev.touches[0]||ev.changedTouches[0]).clientX, y:(ev.touches[0]||ev.changedTouches[0]).clientY }
-    : { x:ev.clientX, y:ev.clientY };
-
-  const onMove = ev => {
-    if (isTouch) ev.preventDefault();
-    const { x, y } = getXY(ev);
-    if (Math.abs(x-_smMarkerDrag.startX)>3 || Math.abs(y-_smMarkerDrag.startY)>3) _smMarkerDrag.moved=true;
-    if (!_smMarkerDrag.moved) return;
-    const img = document.getElementById('sm-img');
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
-    const xPct = (x-rect.left)/rect.width*100;
-    const yPct = (y-rect.top)/rect.height*100;
-    const el = document.querySelector(`[data-marker-id="${markerId}"]`);
-    if (el) { el.style.left=xPct+'%'; el.style.top=yPct+'%'; }
-  };
-
-  const onUp = ev => {
-    document.removeEventListener(isTouch?'touchmove':'mousemove', onMove);
-    document.removeEventListener(isTouch?'touchend':'mouseup', onUp);
-    if (!_smMarkerDrag?.moved) { _smMarkerDrag=null; return; }
-    const { x, y } = getXY(ev);
-    const img = document.getElementById('sm-img');
-    if (img) {
-      const rect = img.getBoundingClientRect();
-      const xPct = Math.max(0,Math.min(100,(x-rect.left)/rect.width*100));
-      const yPct = Math.max(0,Math.min(100,(y-rect.top)/rect.height*100));
-      const p = getProject();
-      const floor = _smGetFloor(p);
-      const m = (floor?.markers||[]).find(mk=>mk.id===markerId);
-      if (m) {
-        m.x=parseFloat(xPct.toFixed(2));
-        m.y=parseFloat(yPct.toFixed(2));
-        logChange(`Site map marker moved: ${m.label}`);
-        save();
-      }
-    }
-    _smMarkerDrag=null;
-    renderSiteMap();
-  };
-
-  document.addEventListener(isTouch?'touchmove':'mousemove', onMove, {passive:false});
-  document.addEventListener(isTouch?'touchend':'mouseup', onUp, {passive:false});
-}
-
-// ── IDF sidebar drag (drag rack from sidebar onto map) ──
-
-function smStartIdfDrag(e, rackId) {
-  e.preventDefault();
-  const p = getProject();
-  const rack = p.racks.find(r=>r.id===rackId);
-  if (!rack) return;
-
-  const isTouch = e.type==='touchstart';
-  const startX = isTouch ? e.touches[0].clientX : e.clientX;
-  const startY = isTouch ? e.touches[0].clientY : e.clientY;
-
-  const ghost = document.createElement('div');
-  ghost.className = 'sitemap-idf';
-  ghost.style.cssText = `position:fixed;z-index:9998;pointer-events:none;transform:translate(-50%,-50%);left:${startX}px;top:${startY}px;opacity:0.85`;
-  ghost.innerHTML = `<div class="sitemap-idf-box" style="border-color:#00c8ff">🗄</div><div class="sitemap-idf-name" style="color:#00c8ff">${esc(rack.name)}</div>`;
-  document.body.appendChild(ghost);
-
-  const getXY = ev => isTouch
-    ? { x:(ev.touches[0]||ev.changedTouches[0]).clientX, y:(ev.touches[0]||ev.changedTouches[0]).clientY }
-    : { x:ev.clientX, y:ev.clientY };
-
-  const onMove = ev => {
-    if (isTouch) ev.preventDefault();
-    const { x, y } = getXY(ev);
-    ghost.style.left=x+'px'; ghost.style.top=y+'px';
-    const canvas=document.getElementById('sm-canvas');
-    if(canvas){
-      const cr=canvas.getBoundingClientRect();
-      canvas.style.outline=(x>=cr.left&&x<=cr.right&&y>=cr.top&&y<=cr.bottom)?'2px solid var(--accent)':'';
-    }
-  };
-
-  const onUp = ev => {
-    document.removeEventListener(isTouch?'touchmove':'mousemove', onMove);
-    document.removeEventListener(isTouch?'touchend':'mouseup', onUp);
-    ghost.remove();
-    const canvas=document.getElementById('sm-canvas');
-    if(canvas) canvas.style.outline='';
-
-    const { x, y } = getXY(ev);
-    const canvasRect=canvas?.getBoundingClientRect();
-    if(!canvasRect||x<canvasRect.left||x>canvasRect.right||y<canvasRect.top||y>canvasRect.bottom) return;
-
-    const img=document.getElementById('sm-img');
-    if(!img) return;
-    const imgRect=img.getBoundingClientRect();
-    const xPct=Math.max(0,Math.min(100,((x-imgRect.left)/imgRect.width*100)));
-    const yPct=Math.max(0,Math.min(100,((y-imgRect.top)/imgRect.height*100)));
-
-    const pNow=getProject();
-    const floor=_smGetFloor(pNow);
-    if(!floor) return;
-
-    // If a marker for this rack already exists on this floor, move it
-    const existing=floor.markers.find(m=>m.rackId===rackId);
-    if(existing){
-      existing.x=parseFloat(xPct.toFixed(2));
-      existing.y=parseFloat(yPct.toFixed(2));
-      logChange(`IDF marker moved: ${rack.name}`);
-    } else {
-      floor.markers.push({
-        id:genId(),
-        x:parseFloat(xPct.toFixed(2)),
-        y:parseFloat(yPct.toFixed(2)),
-        label:rack.name,
-        type:'idf',
-        color:'#00c8ff',
-        size:1,
-        rackId:rackId
-      });
-      logChange(`IDF marker placed: ${rack.name}`);
-    }
-    save(); renderSiteMap();
-    toast(`IDF placed: ${rack.name}`,'success');
-  };
-
-  document.addEventListener(isTouch?'touchmove':'mousemove', onMove, {passive:false});
-  document.addEventListener(isTouch?'touchend':'mouseup', onUp, {passive:false});
-}
-
-// ── Marker click ──
-
-function smMarkerClick(id) {
-  if(_smMarkerDrag?.moved) { _smMarkerDrag=null; return; }
-  const p=getProject();
-  const floor=_smGetFloor(p);
-  const m=(floor?.markers||[]).find(x=>x.id===id);
-  if(!m) return;
-  const rack=m.rackId?p.racks.find(r=>r.id===m.rackId):null;
-
-  if(m.type==='idf') {
-    const rackLocation=rack?.location||'';
-    const locationRacks=rackLocation
-      ? (p.racks||[]).filter(r=>r.location===rackLocation)
-      : rack ? [rack] : [];
-    const matchingFolder=(p.photoFolders||[]).find(f=>{
-      if(!rackLocation) return f.name===m.label||f.name.includes(m.label);
-      return f.location===rackLocation||f.name===rackLocation||f.name.includes(rackLocation);
+  try {
+    const blob = await _convertHeicIfNeeded(file, file.name);
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
     });
-
-    openModal(`
-      <h3 style="margin-bottom:4px">🗄 ${esc(m.label)}</h3>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">
-        IDF Closet${rack?' · Rack: '+esc(rack.name):''}${rackLocation?' · '+esc(rackLocation):''}
-      </div>
-      ${locationRacks.length>0?`
-        <div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px">Racks (${locationRacks.length})</div>
-        <div style="max-height:150px;overflow-y:auto;margin-bottom:10px">
-          ${locationRacks.map(r=>`
-            <div style="padding:6px 10px;background:var(--card2);border:1px solid var(--border);border-radius:5px;margin-bottom:4px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px"
-              onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${r.id}');setView('racks')">
-              <span style="color:var(--accent)">▸</span>
-              <span style="flex:1">${esc(r.name)}</span>
-              <span style="font-size:10px;color:var(--text3)">${r.uHeight||42}U</span>
-            </div>
-          `).join('')}
-        </div>
-      `:''}
-      <div class="modal-actions">
-        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-        ${matchingFolder?`<button class="btn btn-ghost" onclick="closeModal();_currentPhotoFolderId='${matchingFolder.id}';setView('photos')">📷 Photos</button>`:''}
-        ${rack?`<button class="btn btn-primary" onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">View Rack →</button>`:''}
-        ${_smEditMode?`<button class="btn btn-ghost" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">✎ Edit</button>`:''}
-      </div>
-    `);
-  } else {
-    openModal(`
-      <h3 style="margin-bottom:8px">${esc(m.label)}</h3>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Type: ${esc(m.type||'')} ${rack?'· Rack: '+esc(rack.name):''} · Size: ${Math.round((m.size||1)*100)}%</div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-        ${rack?`<button class="btn btn-ghost" onclick="closeModal();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">View Rack →</button>`:''}
-        ${_smEditMode?`<button class="btn btn-primary" onclick="closeModal();openSmMarkerModal('${id}','${m.x}','${m.y}')">Edit</button>`:''}
-      </div>`);
+    const p = getProject();
+    const floors = _smFloors();
+    let floor = _smFloor();
+    if (_smAddName || !floor) {
+      floor = { id: genId(), name: _smAddName || ('Map ' + (floors.length + 1)), thumb: '', markers: [], cableLines: [], symbols: [], texts: [] };
+      floors.push(floor);
+    }
+    await _idbSavePhotoData(_smImgKey(floor.id), dataUrl);
+    floor.thumb = await _generateThumb(dataUrl, 400) || '';
+    logChange(`Site map ${_smAddName ? 'added' : 'image replaced'}: "${floor.name}"`);
+    _smAddName = '';
+    save();
+    if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
+    closeModal();
+    openMapStudio(floor.id);
+  } catch (err) {
+    console.error('Site map upload error:', err);
+    toast('Could not load that image', 'error');
   }
 }
+
+// ═══════════════════════════════════════════
+//  MAP STUDIO (full-screen overlay)
+// ═══════════════════════════════════════════
+async function openMapStudio(floorId, opts = {}) {
+  const p = getProject();
+  const floors = _smFloors();
+  if (floors.length === 0) { smAddMapFlow(); return; }
+  const floor = floors.find(f => f.id === floorId) || floors[0];
+  _smFloorId = floor.id;
+  _smMode = opts.mode || 'view';
+  _smPendingRun = opts.runId || null;
+  _smDraft = null; _smUndo = [];
+  _smZoom = 1; _smPan = { x: 0, y: 0 };
+
+  closeMapStudio();
+  const el = document.createElement('div');
+  el.id = 'sm-studio';
+  el.innerHTML = `
+    <div class="sm-top">
+      <button class="icon-btn" onclick="closeMapStudio()" title="Close">✕</button>
+      <div class="sm-title" onclick="smFloorSheet()">
+        <span id="sm-title-name">${esc(floor.name)}</span> <span style="color:var(--text3);font-size:11px">▾</span>
+      </div>
+      <input type="color" id="sm-color" value="${_smColor}" title="Drawing color" oninput="_smColor=this.value">
+      <button class="icon-btn" onclick="smUndoLast()" title="Undo">↶</button>
+    </div>
+    <div class="sm-modebar" id="sm-modebar"></div>
+    <div class="sm-stage" id="sm-stage">
+      <div class="sm-transform" id="sm-transform">
+        <img class="sm-img" id="sm-img" draggable="false">
+        <svg class="sm-svg" id="sm-svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+        <div class="sm-overlays" id="sm-overlays"></div>
+      </div>
+      <div class="sm-loading" id="sm-loading">Loading map…</div>
+      <div class="sm-drawbar" id="sm-drawbar" style="display:none">
+        <button class="btn btn-ghost btn-sm" onclick="smCancelDraw()">✕ Cancel</button>
+        <span id="sm-drawhint" style="font-size:11px;color:var(--text2);font-family:var(--mono)">Tap to add points</span>
+        <button class="btn btn-primary btn-sm" onclick="smFinishDraw()">✓ Finish</button>
+      </div>
+      <div class="sm-hint" id="sm-hint"></div>
+    </div>
+    <div class="sm-rackstrip" id="sm-rackstrip" style="display:none"></div>
+  `;
+  el.addEventListener('contextmenu', e => e.preventDefault());
+  document.body.appendChild(el);
+
+  // Stage interactions (pan / zoom / tap)
+  const stage = document.getElementById('sm-stage');
+  stage.addEventListener('wheel', _smWheel, { passive: false });
+  stage.addEventListener('pointerdown', _smPtrDown);
+  stage.addEventListener('pointermove', _smPtrMove);
+  stage.addEventListener('pointerup', _smPtrUp);
+  stage.addEventListener('pointercancel', _smPtrCancel);
+  stage.addEventListener('touchstart', _smTouchStart, { passive: false });
+  stage.addEventListener('touchmove', _smTouchMove, { passive: false });
+  stage.addEventListener('touchend', _smTouchEnd, { passive: true });
+
+  smSetMode(_smMode);
+  smRedraw();
+
+  // Load the full-res floor image (IDB → Drive fallback)
+  const img = document.getElementById('sm-img');
+  const data = await _lazyGetPhotoData(_smImgKey(floor.id));
+  const loading = document.getElementById('sm-loading');
+  if (data) {
+    img.onload = () => { if (loading) loading.style.display = 'none'; smRedraw(); };
+    img.src = data;
+  } else if (floor.thumb) {
+    img.onload = () => { if (loading) loading.style.display = 'none'; smRedraw(); };
+    img.src = floor.thumb;
+    toast('Showing preview — full map loads from Drive when signed in', 'warning');
+  } else {
+    if (loading) loading.innerHTML = `No image for this map.<br><br><button class="btn btn-primary btn-sm" onclick="_smAddName='';document.getElementById('sitemap-upload').click()">📁 Choose Image</button>`;
+  }
+
+  if (_smPendingRun) {
+    const run = (p.cableRuns || []).find(r => r.id === _smPendingRun);
+    if (run) {
+      if (run.color) { _smColor = run.color; const ci = document.getElementById('sm-color'); if (ci) ci.value = run.color; }
+      smSetMode('draw');
+      toast(`Draw the path for "${run.label || 'cable run'}" — tap to add points`, 'success');
+    }
+  }
+}
+
+function closeMapStudio() {
+  document.getElementById('sm-studio')?.remove();
+  _smDraft = null; _smElDrag = null; _smDragP = null; _smPinch = null;
+}
+
+// ── Mode bar ──
+function smSetMode(mode) {
+  _smMode = mode;
+  // NOTE: an in-progress draft line survives mode switches — only
+  // Cancel discards it and only Finish saves it.
+  const bar = document.getElementById('sm-modebar');
+  if (!bar) return;
+  const chip = (m, ico, lbl) => `<div class="sm-chip ${_smMode === m ? 'on' : ''}" onclick="smSetMode('${m}')">${ico}<span>${lbl}</span></div>`;
+  bar.innerHTML =
+    chip('view', '✋', 'Move') +
+    chip('draw', '✏️', 'Draw') +
+    chip('sym:floorup', '⬆', 'Up') +
+    chip('sym:floordown', '⬇', 'Down') +
+    chip('sym:conduit', '▭', 'Conduit') +
+    chip('text', '🅣', 'Text') +
+    `<div class="sm-chip ${_smMode.startsWith('rack:') || _smMode.startsWith('dev:') ? 'on' : ''}" onclick="smToggleRackStrip()">▤<span>Place</span></div>`;
+  const drawbar = document.getElementById('sm-drawbar');
+  if (drawbar) drawbar.style.display = (mode === 'draw' && _smDraft) ? 'flex' : 'none';
+  const hint = document.getElementById('sm-hint');
+  if (hint) {
+    hint.textContent =
+      mode === 'draw' ? 'Tap to add points · two fingers to pan/zoom' :
+      mode === 'text' ? 'Tap the map to place a text box' :
+      mode.startsWith('sym:') ? `Tap the map to place: ${SM_SYMBOLS[mode.slice(4)]?.label || ''}` :
+      mode.startsWith('rack:') ? 'Tap the map to place the rack' :
+      mode.startsWith('dev:') ? 'Tap the map to place the device' :
+      _smDraft ? 'Draft line kept — go to ✏️ Draw to continue it' :
+      'Drag to pan · pinch to zoom · tap items to edit · hold to move them';
+  }
+}
+
+function smToggleRackStrip() {
+  const strip = document.getElementById('sm-rackstrip');
+  if (!strip) return;
+  if (strip.style.display !== 'none') { strip.style.display = 'none'; smSetMode('view'); return; }
+  const p = getProject();
+  const f = _smFloor();
+  const placedRacks = new Set((f?.markers || []).filter(m => m.rackId).map(m => m.rackId));
+  const placedDevs = new Set((f?.markers || []).filter(m => m.devId).map(m => m.devId));
+  const racks = p.racks.filter(r => !placedRacks.has(r.id));
+  // Wall-mount gear: unracked devices (cameras, APs, access control…) — racked
+  // equipment is already located by its rack's marker.
+  const devs = p.devices.filter(d => !d.rackId && !placedDevs.has(d.id))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const chip = (mode, color, radius, name) => `
+    <div class="pool-chip" onclick="smSetMode('${mode}');document.querySelectorAll('#sm-rackstrip .pool-chip').forEach(c=>c.style.borderColor='');this.style.borderColor='var(--accent)'">
+      <span class="pc-dot" style="background:${color};border-radius:${radius}"></span>
+      <span class="pc-name">${esc(name)}</span>
+    </div>`;
+  strip.innerHTML = (racks.length === 0 && devs.length === 0)
+    ? `<div style="font-size:11px;color:var(--text3);font-family:var(--mono);padding:8px 4px">All racks and unracked devices are placed on this map</div>`
+    : `<div style="font-size:10px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Tap an item, then tap its spot on the map</div>
+       <div class="pool-strip">${racks.map(r => chip('rack:' + r.id, 'var(--accent)', '2px', r.name)).join('')}${devs.map(d => chip('dev:' + d.id, dtColor(d.deviceType || 'Misc.'), '50%', d.name)).join('')}</div>`;
+  strip.style.display = 'block';
+  smSetMode('view');
+}
+
+// ═══════════════════════════════════════════
+//  RENDERING
+// ═══════════════════════════════════════════
+// Keep the SVG + overlay layers exactly on the rendered image box
+function _smSyncLayers() {
+  const img = document.getElementById('sm-img');
+  const svg = document.getElementById('sm-svg');
+  const ov = document.getElementById('sm-overlays');
+  if (!img || !svg || !ov) return;
+  const l = img.offsetLeft + 'px', t = img.offsetTop + 'px';
+  const w = img.offsetWidth + 'px', h = img.offsetHeight + 'px';
+  [svg, ov].forEach(x => { x.style.left = l; x.style.top = t; x.style.width = w; x.style.height = h; });
+}
+if (!window._smResizeWired) {
+  window._smResizeWired = true;
+  window.addEventListener('resize', () => { if (document.getElementById('sm-studio')) _smSyncLayers(); });
+}
+
+function smRedraw() {
+  _smSyncLayers();
+  const f = _smFloor();
+  const svg = document.getElementById('sm-svg');
+  const ov = document.getElementById('sm-overlays');
+  if (!f || !svg || !ov) return;
+  const p = getProject();
+
+  // Cable lines (+ invisible fat hit lines) + draft.
+  // A line currently being extended renders only as the draft.
+  let s = '';
+  f.cableLines.forEach(l => {
+    if (_smDraft && _smDraft.editId === l.id) return;
+    const pts = (l.points || []).map(pt => `${pt.x},${pt.y}`).join(' ');
+    if (!pts) return;
+    s += `<polyline points="${pts}" fill="none" stroke="${esc(l.color || '#00c8ff')}" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" opacity=".92"/>`;
+    s += `<polyline points="${pts}" fill="none" stroke="rgba(0,0,0,0.001)" stroke-width="18" vector-effect="non-scaling-stroke" style="pointer-events:stroke;cursor:pointer" onclick="smLineSheet('${l.id}')"/>`;
+  });
+  if (_smDraft && _smDraft.points.length) {
+    const pts = _smDraft.points.map(pt => `${pt.x},${pt.y}`).join(' ');
+    s += `<polyline points="${pts}" fill="none" stroke="${_smColor}" stroke-width="3" vector-effect="non-scaling-stroke" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    _smDraft.points.forEach(pt => {
+      s += `<circle cx="${pt.x}" cy="${pt.y}" r="0.9" fill="${_smColor}" stroke="#000" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    });
+  }
+  svg.innerHTML = s;
+
+  // Line labels + markers + symbols + texts (HTML layer)
+  let o = '';
+  f.cableLines.forEach(l => {
+    if (_smDraft && _smDraft.editId === l.id) return;
+    if (!l.label || !(l.points || []).length) return;
+    const mid = l.points[Math.floor(l.points.length / 2)];
+    o += `<div class="sm-linelbl" style="left:${mid.x}%;top:${mid.y}%;color:${esc(l.color || '#00c8ff')}" onclick="smLineSheet('${l.id}')">${esc(l.label)}</div>`;
+  });
+  f.markers.filter(m => m.rackId).forEach(m => {
+    const rack = p.racks.find(r => r.id === m.rackId);
+    if (!rack) return;
+    o += `<div class="sm-el sm-rackmark" style="left:${m.x}%;top:${m.y}%" onpointerdown="smElDown(event,'marker','${m.id}')">
+      <div class="sm-rackbox">▤</div><div class="sm-ellbl">${esc(rack.name)}</div>
+    </div>`;
+  });
+  f.markers.filter(m => m.devId).forEach(m => {
+    const dev = p.devices.find(d => d.id === m.devId);
+    if (!dev) return;
+    const c = dtColor(dev.deviceType || 'Misc.');
+    o += `<div class="sm-el sm-devmark" style="left:${m.x}%;top:${m.y}%" onpointerdown="smElDown(event,'marker','${m.id}')">
+      <div class="sm-devdot" style="background:${c};box-shadow:0 0 9px ${c}99"></div><div class="sm-ellbl">${esc(dev.name)}</div>
+    </div>`;
+  });
+  f.symbols.forEach(sy => {
+    const def = SM_SYMBOLS[sy.type] || { icon: '?' };
+    o += `<div class="sm-el sm-sym" style="left:${sy.x}%;top:${sy.y}%" onpointerdown="smElDown(event,'symbol','${sy.id}')">
+      <div class="sm-symbox" style="border-color:${esc(sy.color || '#00c8ff')};color:${esc(sy.color || '#00c8ff')}">${def.icon}</div>
+      ${sy.label ? `<div class="sm-ellbl">${esc(sy.label)}</div>` : ''}
+    </div>`;
+  });
+  f.texts.forEach(t => {
+    o += `<div class="sm-el sm-text" style="left:${t.x}%;top:${t.y}%;color:${esc(t.color || '#fff')}" onpointerdown="smElDown(event,'text','${t.id}')">${esc(t.text)}</div>`;
+  });
+  ov.innerHTML = o;
+
+  const drawbar = document.getElementById('sm-drawbar');
+  if (drawbar) drawbar.style.display = (_smMode === 'draw' && _smDraft) ? 'flex' : 'none';
+}
+
+// ═══════════════════════════════════════════
+//  PAN / ZOOM / TAP ENGINE
+// ═══════════════════════════════════════════
+function _smApply() {
+  const t = document.getElementById('sm-transform');
+  if (t) t.style.transform = `translate(${_smPan.x}px, ${_smPan.y}px) scale(${_smZoom})`;
+}
+function _smStagePoint(cx, cy) {
+  const stage = document.getElementById('sm-stage');
+  const r = stage.getBoundingClientRect();
+  return { x: cx - r.left - r.width / 2, y: cy - r.top - r.height / 2 };
+}
+function _smSetZoom(z, cx, cy) {
+  z = Math.max(0.5, Math.min(12, z));
+  const k = z / _smZoom;
+  _smPan.x = cx - k * (cx - _smPan.x);
+  _smPan.y = cy - k * (cy - _smPan.y);
+  _smZoom = z;
+  _smApply();
+}
+function _smWheel(e) {
+  e.preventDefault();
+  const pt = _smStagePoint(e.clientX, e.clientY);
+  _smSetZoom(_smZoom * (e.deltaY > 0 ? 0.85 : 1.18), pt.x, pt.y);
+}
+function _smEventPct(cx, cy) {
+  const img = document.getElementById('sm-img');
+  if (!img || img.offsetWidth < 4) return null;
+  const r = img.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const x = (cx - r.left) / r.width * 100;
+  const y = (cy - r.top) / r.height * 100;
+  if (x < -2 || x > 102 || y < -2 || y > 102) return null;
+  return { x: Math.max(0, Math.min(100, +x.toFixed(2))), y: Math.max(0, Math.min(100, +y.toFixed(2))) };
+}
+
+function _smPtrDown(e) {
+  if (_smElDrag) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (e.pointerType !== 'mouse' && e.isPrimary === false) return;
+  _smDragP = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
+  _smMoved = false;
+}
+function _smPtrMove(e) {
+  if (_smElDrag) { _smElMove(e); return; }
+  if (!_smDragP || _smPinch) return;
+  const dx = e.clientX - _smDragP.x, dy = e.clientY - _smDragP.y;
+  if (Math.abs(e.clientX - _smDragP.sx) > 6 || Math.abs(e.clientY - _smDragP.sy) > 6) _smMoved = true;
+  if (_smMoved) {
+    _smPan.x += dx; _smPan.y += dy;
+    _smDragP.x = e.clientX; _smDragP.y = e.clientY;
+    _smApply();
+  }
+}
+function _smPtrUp(e) {
+  if (_smElDrag) { _smElUp(e); return; }
+  if (!_smDragP) return;
+  const wasMoved = _smMoved;
+  _smDragP = null;
+  if (wasMoved || _smPinch) return;
+  _smTap(e.clientX, e.clientY);
+}
+function _smPtrCancel() { _smDragP = null; _smMoved = false; }
+
+function _smTouchStart(e) {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    const [a, b] = e.touches;
+    _smPinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: _smZoom };
+    _smDragP = null;
+  } else if (e.touches.length === 1) {
+    const now = Date.now();
+    if (now - _smLastTap < 300 && _smMode === 'view') {
+      e.preventDefault();
+      const t = e.touches[0];
+      const pt = _smStagePoint(t.clientX, t.clientY);
+      _smSetZoom(_smZoom > 1 ? 1 : 2.5, pt.x, pt.y);
+      if (_smZoom === 1) { _smPan = { x: 0, y: 0 }; _smApply(); }
+      _smLastTap = 0;
+      return;
+    }
+    _smLastTap = now;
+  }
+}
+function _smTouchMove(e) {
+  if (_smPinch && e.touches.length === 2) {
+    e.preventDefault();
+    const [a, b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2;
+    const mid = _smStagePoint(midX, midY);
+    _smSetZoom(_smPinch.zoom * (dist / _smPinch.dist), mid.x, mid.y);
+    _smMoved = true;
+  } else if (e.touches.length === 1 && _smDragP) {
+    e.preventDefault(); // we pan manually in pointermove
+  }
+}
+function _smTouchEnd(e) {
+  if (e.touches.length < 2) _smPinch = null;
+}
+
+// Tap dispatch by mode
+function _smTap(cx, cy) {
+  const pct = _smEventPct(cx, cy);
+  if (!pct) return;
+  const f = _smFloor();
+  if (!f) return;
+
+  if (_smMode === 'draw') {
+    if (!_smDraft) _smDraft = { points: [] };
+    _smDraft.points.push(pct);
+    smRedraw();
+    return;
+  }
+  if (_smMode.startsWith('sym:')) {
+    const type = _smMode.slice(4);
+    const sy = { id: genId(), type, x: pct.x, y: pct.y, color: _smColor, label: '' };
+    f.symbols.push(sy);
+    _smUndo.push({ kind: 'symbol', id: sy.id });
+    logChange(`Map symbol placed: ${SM_SYMBOLS[type]?.label || type} on "${f.name}"`);
+    save(); smRedraw();
+    return;
+  }
+  if (_smMode === 'text') {
+    _smPendingTextAt = pct;
+    openModal(`
+      <h3>🅣 Text Box</h3>
+      <div class="form-row"><label>Text *</label>
+        <input class="form-control" id="smt-text" placeholder="e.g. IDF closet behind panel" autofocus></div>
+      <div class="form-row" style="max-width:130px"><label>Color</label>
+        <input type="color" class="form-control" id="smt-color" value="${_smColor}" style="height:46px;padding:4px"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="smSaveNewText()">Place</button>
+      </div>`);
+    setTimeout(() => document.getElementById('smt-text')?.focus(), 60);
+    return;
+  }
+  if (_smMode.startsWith('rack:')) {
+    const rackId = _smMode.slice(5);
+    const p = getProject();
+    const rack = p.racks.find(r => r.id === rackId);
+    if (!rack) { smSetMode('view'); return; }
+    const m = { id: genId(), type: 'idf', rackId, x: pct.x, y: pct.y, label: rack.name, color: '#00c8ff', size: 1 };
+    f.markers.push(m);
+    _smUndo.push({ kind: 'marker', id: m.id });
+    logChange(`Rack placed on map "${f.name}": ${rack.name}`);
+    save(); smRedraw(); smSetMode('view');
+    const strip = document.getElementById('sm-rackstrip');
+    if (strip) strip.style.display = 'none';
+    toast(`${rack.name} placed — drag it to fine-tune`, 'success');
+    return;
+  }
+  if (_smMode.startsWith('dev:')) {
+    const devId = _smMode.slice(4);
+    const p = getProject();
+    const dev = p.devices.find(d => d.id === devId);
+    if (!dev) { smSetMode('view'); return; }
+    const m = { id: genId(), type: 'dev', devId, x: pct.x, y: pct.y, label: dev.name };
+    f.markers.push(m);
+    _smUndo.push({ kind: 'marker', id: m.id });
+    logChange(`Device placed on map "${f.name}": ${dev.name}`);
+    save(); smRedraw(); smSetMode('view');
+    const strip = document.getElementById('sm-rackstrip');
+    if (strip) strip.style.display = 'none';
+    toast(`${dev.name} placed — hold & drag to fine-tune`, 'success');
+    return;
+  }
+}
+
+let _smPendingTextAt = null;
+function smSaveNewText() {
+  const text = document.getElementById('smt-text')?.value?.trim();
+  if (!text) return toast('Enter some text', 'error');
+  const color = document.getElementById('smt-color')?.value || _smColor;
+  const f = _smFloor();
+  if (!f || !_smPendingTextAt) { closeModal(); return; }
+  const t = { id: genId(), x: _smPendingTextAt.x, y: _smPendingTextAt.y, text, color };
+  f.texts.push(t);
+  _smUndo.push({ kind: 'text', id: t.id });
+  logChange(`Map text added on "${f.name}": "${text}"`);
+  _smPendingTextAt = null;
+  save(); closeModal(); smRedraw(); smSetMode('view');
+}
+
+// ═══════════════════════════════════════════
+//  DRAW — finish / cancel / save line
+// ═══════════════════════════════════════════
+function smCancelDraw() { _smDraft = null; smRedraw(); smSetMode('view'); }
+
+function smFinishDraw() {
+  if (!_smDraft || _smDraft.points.length < 2) return toast('Tap at least two points first', 'error');
+  // Extending an existing line: just update its geometry, keep its details
+  if (_smDraft.editId) {
+    const f = _smFloor();
+    const l = f?.cableLines.find(x => x.id === _smDraft.editId);
+    if (l) {
+      l.points = _smDraft.points;
+      logChange(`Cable path extended on "${f.name}"${l.label ? ': ' + l.label : ''}`);
+    }
+    _smDraft = null;
+    save(); smRedraw(); smSetMode('view');
+    toast('Path updated', 'success');
+    return;
+  }
+  const p = getProject();
+  const run = _smPendingRun ? (p.cableRuns || []).find(r => r.id === _smPendingRun) : null;
+  const typeOpts = CABLE_TYPES.map(t => `<option value="${t}" ${(run?.type || 'Cat6') === t ? 'selected' : ''}>${t}</option>`).join('');
+  const runOpts = (p.cableRuns || []).map(r =>
+    `<option value="${r.id}" ${_smPendingRun === r.id ? 'selected' : ''}>${esc(r.label || '(unlabeled)')} — ${esc(r.fromRoom || '?')}→${esc(r.toRoom || '?')}</option>`).join('');
+  openModal(`
+    <h3>Save Cable Path</h3>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Label</label>
+        <input class="form-control" id="sml-label" value="${esc(run?.label || '')}" placeholder="e.g. CR-001"></div>
+      <div class="form-row" style="flex:0 0 110px"><label>Color</label>
+        <input type="color" class="form-control" id="sml-color" value="${run?.color || _smColor}" style="height:46px;padding:4px"></div>
+    </div>
+    <div class="form-row"><label>Cable Type</label>
+      <select class="form-control" id="sml-type">${typeOpts}</select></div>
+    <div class="form-row"><label>Link to Cable Run <span style="color:var(--text3)">(optional)</span></label>
+      <select class="form-control" id="sml-run">
+        <option value="">— Not linked —</option>
+        ${runOpts}
+      </select></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smSaveLine()">Save Path</button>
+    </div>`);
+}
+
+function smSaveLine() {
+  const f = _smFloor();
+  if (!f || !_smDraft) { closeModal(); return; }
+  const line = {
+    id: genId(),
+    points: _smDraft.points,
+    label: document.getElementById('sml-label')?.value?.trim() || '',
+    color: document.getElementById('sml-color')?.value || _smColor,
+    cableType: document.getElementById('sml-type')?.value || 'Cat6',
+    linkedRunId: document.getElementById('sml-run')?.value || ''
+  };
+  f.cableLines.push(line);
+  _smUndo.push({ kind: 'line', id: line.id });
+  logChange(`Cable path drawn on "${f.name}"${line.label ? ': ' + line.label : ''}`);
+  _smDraft = null;
+  _smPendingRun = null;
+  save(); closeModal(); smRedraw(); smSetMode('view');
+  toast('Cable path saved', 'success');
+}
+
+// Edit an existing line
+function smLineSheet(lineId) {
+  const f = _smFloor();
+  const l = f?.cableLines.find(x => x.id === lineId);
+  if (!l) return;
+  const p = getProject();
+  const run = l.linkedRunId ? (p.cableRuns || []).find(r => r.id === l.linkedRunId) : null;
+  const typeOpts = CABLE_TYPES.map(t => `<option value="${t}" ${(l.cableType || 'Cat6') === t ? 'selected' : ''}>${t}</option>`).join('');
+  openModal(`
+    <h3>Cable Path${run ? ` <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">↔ ${esc(run.label || 'run')}</span>` : ''}</h3>
+    <div class="form-row-inline">
+      <div class="form-row"><label>Label</label>
+        <input class="form-control" id="sme-label" value="${esc(l.label || '')}"></div>
+      <div class="form-row" style="flex:0 0 110px"><label>Color</label>
+        <input type="color" class="form-control" id="sme-color" value="${l.color || '#00c8ff'}" style="height:46px;padding:4px"></div>
+    </div>
+    <div class="form-row"><label>Cable Type</label>
+      <select class="form-control" id="sme-type">${typeOpts}</select></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" style="margin-right:auto;flex:0 0 auto;min-width:0" onclick="smDeleteLine('${l.id}')">✕</button>
+      <button class="btn btn-ghost" onclick="smExtendLine('${l.id}')">➕ Extend</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smUpdateLine('${l.id}')">Save</button>
+    </div>`);
+}
+
+// Resume drawing an existing line — its points load into the draft
+function smExtendLine(lineId) {
+  const f = _smFloor();
+  const l = f?.cableLines.find(x => x.id === lineId);
+  if (!l) return;
+  _smDraft = { points: (l.points || []).map(pt => ({ ...pt })), editId: lineId };
+  closeModal();
+  smSetMode('draw');
+  smRedraw();
+  toast('Tap to add points · ↶ removes the last one · ✓ Finish saves', 'success');
+}
+
+function smUpdateLine(lineId) {
+  const f = _smFloor();
+  const l = f?.cableLines.find(x => x.id === lineId);
+  if (!l) { closeModal(); return; }
+  l.label = document.getElementById('sme-label')?.value?.trim() || '';
+  l.color = document.getElementById('sme-color')?.value || l.color;
+  l.cableType = document.getElementById('sme-type')?.value || l.cableType;
+  save(); closeModal(); smRedraw();
+}
+
+function smDeleteLine(lineId) {
+  const f = _smFloor();
+  if (!f) return;
+  f.cableLines = f.cableLines.filter(x => x.id !== lineId);
+  logChange(`Cable path deleted from "${f.name}"`);
+  save(); closeModal(); smRedraw();
+  toast('Path deleted');
+}
+
+// ═══════════════════════════════════════════
+//  PLACED ELEMENT DRAG + EDIT (markers/symbols/texts)
+// ═══════════════════════════════════════════
+// Elements are ANCHORED: a quick tap opens their sheet, and only a
+// press-and-hold (~350ms without moving) picks one up to reposition it.
+// Swipes across an element never move it.
+function smElDown(e, kind, id) {
+  e.stopPropagation();
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const d = { kind, id, sx: e.clientX, sy: e.clientY, moved: false, dragging: false, el: e.currentTarget, pid: e.pointerId, last: null };
+  d.timer = setTimeout(() => {
+    if (_smElDrag !== d || d.moved) return;
+    d.dragging = true;
+    d.el.classList.add('sm-el-lift');
+    try { d.el.setPointerCapture(d.pid); } catch (err) {}
+    if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+  }, 350);
+  _smElDrag = d;
+}
+function _smElMove(e) {
+  const d = _smElDrag;
+  if (!d || e.pointerId !== d.pid) return;
+  if (!d.dragging) {
+    // Moved before the hold completed → not a move gesture; stay anchored
+    if (Math.abs(e.clientX - d.sx) > 7 || Math.abs(e.clientY - d.sy) > 7) {
+      d.moved = true;
+      clearTimeout(d.timer);
+      _smElDrag = null;
+    }
+    return;
+  }
+  e.preventDefault();
+  const pct = _smEventPct(e.clientX, e.clientY);
+  if (!pct) return;
+  d.el.style.left = pct.x + '%';
+  d.el.style.top = pct.y + '%';
+  d.last = pct;
+}
+function _smElUp(e) {
+  const d = _smElDrag;
+  if (!d || e.pointerId !== d.pid) return;
+  clearTimeout(d.timer);
+  _smElDrag = null;
+  d.el.classList.remove('sm-el-lift');
+  const f = _smFloor();
+  if (!f) return;
+  if (d.dragging) {
+    if (d.last) {
+      const arr = d.kind === 'marker' ? f.markers : d.kind === 'symbol' ? f.symbols : f.texts;
+      const item = arr.find(x => x.id === d.id);
+      if (item) { item.x = d.last.x; item.y = d.last.y; save(); }
+    }
+    return;
+  }
+  if (d.moved) return;
+  // Quick tap → edit sheet
+  if (d.kind === 'marker') smMarkerSheet(d.id);
+  else if (d.kind === 'symbol') smSymbolSheet(d.id);
+  else smTextSheet(d.id);
+}
+
+// Element pointermove/up need document-level fallback (capture keeps them on the element)
+document.addEventListener('pointermove', (e) => { if (_smElDrag) _smElMove(e); });
+document.addEventListener('pointerup', (e) => { if (_smElDrag) _smElUp(e); });
+
+function smMarkerSheet(markerId) {
+  const f = _smFloor();
+  const m = f?.markers.find(x => x.id === markerId);
+  if (!m) return;
+  if (m.devId) {
+    const dev = getProject().devices.find(d => d.id === m.devId);
+    const c = dev ? dtColor(dev.deviceType || 'Misc.') : '#888';
+    openModal(`
+      <h3><span style="color:${c}">●</span> ${esc(dev ? dev.name : 'Device marker')}</h3>
+      ${dev ? `<p style="font-size:12.5px;color:var(--text2);margin-bottom:6px">${esc(dev.deviceType || '')}${dev.ip ? ' · ' + esc(dev.ip) : ''}</p>` : ''}
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">Press and hold the marker on the map to move it — it stays anchored otherwise.</p>
+      <div class="modal-actions">
+        <button class="btn btn-danger" style="margin-right:auto;flex:0 0 auto;min-width:0" onclick="smRemoveMarker('${m.id}')">✕ Remove</button>
+        ${dev ? `<button class="btn btn-ghost" onclick="closeModal();closeMapStudio();editDevice('${dev.id}')">Device →</button>` : ''}
+        <button class="btn btn-primary" onclick="closeModal()">Done</button>
+      </div>`);
+    return;
+  }
+  const rack = getProject().racks.find(r => r.id === m.rackId);
+  openModal(`
+    <h3>▤ ${esc(rack ? rack.name : 'Rack marker')}</h3>
+    <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">Press and hold the marker on the map to move it — it stays anchored otherwise.</p>
+    <div class="modal-actions">
+      <button class="btn btn-danger" style="margin-right:auto;flex:0 0 auto;min-width:0" onclick="smRemoveMarker('${m.id}')">✕ Remove</button>
+      ${rack ? `<button class="btn btn-ghost" onclick="closeModal();closeMapStudio();sessionStorage.setItem('netrack_focus_rack','${rack.id}');setView('racks')">Go to rack →</button>` : ''}
+      <button class="btn btn-primary" onclick="closeModal()">Done</button>
+    </div>`);
+}
+function smRemoveMarker(markerId) {
+  const f = _smFloor();
+  if (!f) return;
+  f.markers = f.markers.filter(x => x.id !== markerId);
+  save(); closeModal(); smRedraw();
+  toast('Marker removed');
+}
+
+function smSymbolSheet(symbolId) {
+  const f = _smFloor();
+  const sy = f?.symbols.find(x => x.id === symbolId);
+  if (!sy) return;
+  const def = SM_SYMBOLS[sy.type] || { icon: '?', label: sy.type };
+  openModal(`
+    <h3>${def.icon} ${esc(def.label)}</h3>
+    <div class="form-row"><label>Label <span style="color:var(--text3)">(optional)</span></label>
+      <input class="form-control" id="sms-label" value="${esc(sy.label || '')}" placeholder="e.g. to 2nd floor IDF"></div>
+    <div class="form-row" style="max-width:130px"><label>Color</label>
+      <input type="color" class="form-control" id="sms-color" value="${sy.color || '#00c8ff'}" style="height:46px;padding:4px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" style="margin-right:auto;flex:0 0 auto;min-width:0" onclick="smDeleteSymbol('${sy.id}')">✕</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smUpdateSymbol('${sy.id}')">Save</button>
+    </div>`);
+}
+function smUpdateSymbol(symbolId) {
+  const f = _smFloor();
+  const sy = f?.symbols.find(x => x.id === symbolId);
+  if (!sy) { closeModal(); return; }
+  sy.label = document.getElementById('sms-label')?.value?.trim() || '';
+  sy.color = document.getElementById('sms-color')?.value || sy.color;
+  save(); closeModal(); smRedraw();
+}
+function smDeleteSymbol(symbolId) {
+  const f = _smFloor();
+  if (!f) return;
+  f.symbols = f.symbols.filter(x => x.id !== symbolId);
+  save(); closeModal(); smRedraw();
+}
+
+function smTextSheet(textId) {
+  const f = _smFloor();
+  const t = f?.texts.find(x => x.id === textId);
+  if (!t) return;
+  openModal(`
+    <h3>🅣 Text Box</h3>
+    <div class="form-row"><label>Text *</label>
+      <input class="form-control" id="smt2-text" value="${esc(t.text || '')}"></div>
+    <div class="form-row" style="max-width:130px"><label>Color</label>
+      <input type="color" class="form-control" id="smt2-color" value="${t.color || '#ffffff'}" style="height:46px;padding:4px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" style="margin-right:auto;flex:0 0 auto;min-width:0" onclick="smDeleteText('${t.id}')">✕</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smUpdateText('${t.id}')">Save</button>
+    </div>`);
+}
+function smUpdateText(textId) {
+  const f = _smFloor();
+  const t = f?.texts.find(x => x.id === textId);
+  if (!t) { closeModal(); return; }
+  const txt = document.getElementById('smt2-text')?.value?.trim();
+  if (!txt) return toast('Enter some text', 'error');
+  t.text = txt;
+  t.color = document.getElementById('smt2-color')?.value || t.color;
+  save(); closeModal(); smRedraw();
+}
+function smDeleteText(textId) {
+  const f = _smFloor();
+  if (!f) return;
+  f.texts = f.texts.filter(x => x.id !== textId);
+  save(); closeModal(); smRedraw();
+}
+
+// ── Undo last placed element ──
+function smUndoLast() {
+  const f = _smFloor();
+  if (!f) return;
+  if (_smDraft && _smDraft.points.length > 0) {
+    _smDraft.points.pop();
+    if (_smDraft.points.length === 0) _smDraft = null;
+    smRedraw();
+    return;
+  }
+  const last = _smUndo.pop();
+  if (!last) return toast('Nothing to undo');
+  if (last.kind === 'line') f.cableLines = f.cableLines.filter(x => x.id !== last.id);
+  else if (last.kind === 'symbol') f.symbols = f.symbols.filter(x => x.id !== last.id);
+  else if (last.kind === 'text') f.texts = f.texts.filter(x => x.id !== last.id);
+  else if (last.kind === 'marker') f.markers = f.markers.filter(x => x.id !== last.id);
+  save(); smRedraw();
+  toast('Undone');
+}
+
+// ═══════════════════════════════════════════
+//  FLOOR MANAGEMENT SHEET
+// ═══════════════════════════════════════════
+function smFloorSheet() {
+  const floors = _smFloors();
+  openModal(`
+    <h3>🗺 Site Maps</h3>
+    ${floors.map(f => `
+      <div style="display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--border)">
+        <div class="sm-card-thumb" style="width:52px;height:38px;border-radius:8px;font-size:16px;flex-shrink:0;${f.thumb ? `background-image:url('${f.thumb}')` : ''}">${f.thumb ? '' : '🗺'}</div>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${f.id === _smFloorId ? '800' : '400'};color:${f.id === _smFloorId ? 'var(--accent)' : 'var(--text)'}" onclick="closeModal();openMapStudio('${f.id}')">${esc(f.name)}</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="smRenameFloor('${f.id}')">✎</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="smDeleteFloor('${f.id}')">✕</button>
+      </div>`).join('')}
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal();_smAddName='';document.getElementById('sitemap-upload').click()" title="Replace this map's image">🖼 Replace Image</button>
+      <button class="btn btn-primary" onclick="closeModal();smAddMapFlow()">+ New Map</button>
+    </div>`);
+}
+
+function smRenameFloor(floorId) {
+  const f = _smFloors().find(x => x.id === floorId);
+  if (!f) return;
+  openModal(`
+    <h3>Rename Map</h3>
+    <div class="form-row"><label>Name</label>
+      <input class="form-control" id="smr-name" value="${esc(f.name)}" autofocus></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="smSaveRenameFloor('${f.id}')">Save</button>
+    </div>`);
+  setTimeout(() => { const el = document.getElementById('smr-name'); el?.focus(); el?.select(); }, 60);
+}
+function smSaveRenameFloor(floorId) {
+  const f = _smFloors().find(x => x.id === floorId);
+  const name = document.getElementById('smr-name')?.value?.trim();
+  if (!f || !name) return toast('Enter a name', 'error');
+  logChange(`Site map renamed: "${f.name}" → "${name}"`);
+  f.name = name;
+  save(); closeModal();
+  const t = document.getElementById('sm-title-name');
+  if (t && f.id === _smFloorId) t.textContent = name;
+  if (state.currentView === 'photos' && !document.getElementById('sm-studio')) renderPhotos();
+}
+
+function smDeleteFloor(floorId) {
+  const f = _smFloors().find(x => x.id === floorId);
+  if (!f) return;
+  if (!confirm(`Delete map "${f.name}"? Its drawings, symbols and rack markers will be removed.`)) return;
+  const p = getProject();
+  p.siteMapFloors = p.siteMapFloors.filter(x => x.id !== floorId);
+  _idbDeletePhotoData(_smImgKey(floorId)).catch(() => {});
+  logChange(`Site map deleted: "${f.name}"`);
+  save(); closeModal();
+  if (_smFloorId === floorId) {
+    closeMapStudio();
+    if (p.siteMapFloors.length) openMapStudio(p.siteMapFloors[0].id);
+    else if (state.currentView === 'photos') renderPhotos();
+  }
+  toast('Map deleted');
+}
+
+// ═══════════════════════════════════════════
+//  CABLE RUN INTEGRATION — "Map this run"
+// ═══════════════════════════════════════════
+function smMapRun(runId) {
+  const floors = _smFloors();
+  if (floors.length === 0) {
+    toast('Add a site map first (Photos → Site Maps)', 'warning');
+    smAddMapFlow();
+    return;
+  }
+  if (floors.length === 1) {
+    openMapStudio(floors[0].id, { runId, mode: 'draw' });
+    return;
+  }
+  openModal(`
+    <h3>Draw on which map?</h3>
+    ${floors.map(f => `
+      <div class="sheet-item" onclick="closeModal();openMapStudio('${f.id}',{runId:'${runId}',mode:'draw'})">
+        <span class="si-ico">🗺</span> ${esc(f.name)}
+      </div>`).join('')}
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+}
+
+// Returns floors containing a path linked to this run
+function smRunMappedFloors(runId) {
+  return _smFloors().filter(f => (f.cableLines || []).some(l => l.linkedRunId === runId));
+}
+
+// Wire the hidden site map file input once
+document.getElementById('sitemap-upload')?.addEventListener('change', handleSiteMapUpload);

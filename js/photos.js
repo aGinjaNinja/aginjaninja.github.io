@@ -1,40 +1,44 @@
 // ═══════════════════════════════════════════
-//  PHOTOS
+//  PHOTOS — capture, folders, viewer, export
 // ═══════════════════════════════════════════
 
-
-let _photoEditIdx = -1;
-let _photoDrag = null; // { slotIdx, offX, offY }
-let _photoLayoutLocked = false;
-let _photoResizeObs = null;
-let _currentPhotoFolderId = 'all'; // 'all' or a folder id
-const SLOT_COLORS = ['#4fc3f7','#81c784','#ffb74d','#f06292','#ce93d8','#80cbc4','#ffcc02','#ff8a65','#a5d6a7','#90caf9'];
+let _currentPhotoFolderId = 'all'; // 'all', '' (unfiled) or a folder id
+let _photoTagFilter = '';          // '' or 'dev:<id>' / 'rack:<id>' — filters the grid by tag
+let _photoGroupMode = false;       // "By Room": room → rack → equipment photos, name-tagged
+let _photoGroups = {};             // groupKey → [photo indices] for viewer scoping
+let _pendingPhotoDevId = null;     // set by the device editor so new photos auto-tag to it
 let _viewerPhotoIndices = [];
+let _photoSelectMode = false;
+const _photoSel = new Set(); // selected photo ids (Select mode)
 
 // ═══════════════════════════════════════════
-//  PHOTO VIEWER (lightbox)
+//  PHOTO VIEWER (lightbox with full-res zoom)
 // ═══════════════════════════════════════════
+let _pvZoom = 1, _pvPan = { x: 0, y: 0 };
+let _pvDrag = null, _pvPinch = null, _pvLastTap = 0, _pvMoved = false;
+
 async function openPhotoViewer(idx) {
   const p = getProject();
   const ph = p.photos[idx];
   if (!ph) return;
 
-  // Load full-res data on demand
-  const imgSrc = await _lazyGetPhotoData(ph.id) || ph.thumb || '';
+  // Always try to show the full-resolution original; the thumb is a last resort
+  const fullSrc = await _lazyGetPhotoData(ph.id);
+  const imgSrc = fullSrc || ph.thumb || '';
+  const isPreview = !fullSrc && !!ph.thumb;
 
-  // Use visible indices for prev/next; fall back to all photos
   const indices = _viewerPhotoIndices.length > 0 ? _viewerPhotoIndices : p.photos.map((_, i) => i);
   const pos = indices.indexOf(idx);
   const total = indices.length;
   const prevIdx = total > 1 ? indices[(pos - 1 + total) % total] : -1;
   const nextIdx = total > 1 ? indices[(pos + 1) % total] : -1;
 
-  // Remove existing viewer (and its keydown listener)
   let overlay = document.getElementById('photo-viewer-overlay');
   if (overlay) {
     if (overlay._keyHandler) document.removeEventListener('keydown', overlay._keyHandler);
     overlay.remove();
   }
+  _pvZoom = 1; _pvPan = { x: 0, y: 0 }; _pvDrag = null; _pvPinch = null; _pvMoved = false;
 
   overlay = document.createElement('div');
   overlay.id = 'photo-viewer-overlay';
@@ -42,21 +46,44 @@ async function openPhotoViewer(idx) {
     <button class="pv-close" onclick="closePhotoViewer()" title="Close">✕</button>
     ${prevIdx >= 0 ? `<button class="pv-arrow pv-prev" onclick="event.stopPropagation();openPhotoViewer(${prevIdx})" title="Previous">‹</button>` : ''}
     ${nextIdx >= 0 ? `<button class="pv-arrow pv-next" onclick="event.stopPropagation();openPhotoViewer(${nextIdx})" title="Next">›</button>` : ''}
-    <img class="pv-img" src="${imgSrc}" onclick="event.stopPropagation()" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
-    <div class="pv-bottom">
-      <div class="pv-caption">${esc(ph.caption || ph.name || 'Photo ' + (idx + 1))}</div>
+    <div class="pv-stage" id="pv-stage">
+      <div class="pv-transform" id="pv-transform">
+        <img class="pv-img" id="pv-img" src="${imgSrc}" draggable="false" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
+      </div>
+      ${isPreview ? `<div class="pv-lowres">⚠ Preview quality — full photo not downloaded yet (sign in to Drive and reopen)</div>` : ''}
+      <div class="pv-zoom-hint">scroll / pinch to zoom &nbsp;·&nbsp; double-tap to reset</div>
+    </div>
+    <div class="pv-bottom" onclick="event.stopPropagation()">
+      <input class="pv-caption-input" value="${esc(ph.caption || '')}" placeholder="${esc(ph.name || 'Add a caption…')}"
+        onchange="savePhotoCaption(${idx}, this.value)" title="Caption — saved on change">
       <div class="pv-counter">${pos + 1} / ${total}</div>
       <div class="pv-actions">
-        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();downloadOriginalPhoto(${idx})" title="Download original photo">⬇ Original</button>
-        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();downloadLabeledPhoto(${idx})" title="Download photo with labels">⬇ Labeled</button>
-        <button class="btn btn-ghost btn-sm" onclick="closePhotoViewer();openPhotoEditor(${idx})" style="color:#fff;border-color:rgba(255,255,255,.3)">Edit</button>
+        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();downloadOriginalPhoto(${idx})" title="Download original photo">⬇ Download</button>
+        <button class="btn btn-ghost btn-sm pv-dl-btn" onclick="event.stopPropagation();rotatePhoto(${idx})" title="Rotate 90°">↻ Rotate</button>
+        <button class="btn btn-ghost btn-sm pv-dl-btn" id="pv-more-btn" onclick="_pvToggleMenu(event)" title="More">⋯</button>
+      </div>
+      <div class="pv-menu" id="pv-menu">
+        <div class="sheet-item" onclick="closePhotoViewer();openPhotoTagSheet(${idx})"><span class="si-ico">🏷</span> Tag device / rack</div>
+        <div class="sheet-item" onclick="closePhotoViewer();movePhotoToFolder(${idx})"><span class="si-ico">📁</span> Move to folder</div>
+        <div class="sheet-item" style="color:var(--red)" onclick="closePhotoViewer();deletePhoto(${idx})"><span class="si-ico">✕</span> Delete photo</div>
       </div>
     </div>
   `;
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closePhotoViewer(); });
 
-  // Keyboard navigation
+  // Close on click of empty space (not after a pan drag); close the ⋯ menu first if open
+  overlay.addEventListener('click', (e) => {
+    if (_pvMoved) { _pvMoved = false; return; }
+    const menu = document.getElementById('pv-menu');
+    if (menu && menu.classList.contains('open') && !e.target.closest('#pv-menu') && !e.target.closest('#pv-more-btn')) {
+      menu.classList.remove('open');
+      return;
+    }
+    const t = e.target;
+    if (t === overlay || t.id === 'pv-stage' || t.id === 'pv-transform') closePhotoViewer();
+  });
+
   overlay._keyHandler = (e) => {
+    if (e.target.tagName === 'INPUT') return;
     if (e.key === 'Escape') closePhotoViewer();
     else if (e.key === 'ArrowLeft' && prevIdx >= 0) openPhotoViewer(prevIdx);
     else if (e.key === 'ArrowRight' && nextIdx >= 0) openPhotoViewer(nextIdx);
@@ -64,50 +91,232 @@ async function openPhotoViewer(idx) {
   document.addEventListener('keydown', overlay._keyHandler);
 
   document.body.appendChild(overlay);
+
+  // Wire zoom / pan interactions (non-passive so we can preventDefault)
+  const stage = overlay.querySelector('#pv-stage');
+  stage.addEventListener('wheel', _pvWheel, { passive: false });
+  stage.addEventListener('mousedown', _pvMouseDown);
+  window.addEventListener('mousemove', _pvMouseMove);
+  window.addEventListener('mouseup', _pvMouseUp);
+  stage.addEventListener('dblclick', _pvDblClick);
+  stage.addEventListener('touchstart', _pvTouchStart, { passive: false });
+  stage.addEventListener('touchmove', _pvTouchMove, { passive: false });
+  stage.addEventListener('touchend', _pvTouchEnd, { passive: true });
 }
 
 function closePhotoViewer() {
   const overlay = document.getElementById('photo-viewer-overlay');
   if (!overlay) return;
   if (overlay._keyHandler) document.removeEventListener('keydown', overlay._keyHandler);
+  window.removeEventListener('mousemove', _pvMouseMove);
+  window.removeEventListener('mouseup', _pvMouseUp);
   overlay.remove();
 }
 
-function _photosPageMoreMenu() {
-  return '<div class="topbar-overflow-item" onclick="createPhotoFolder();document.getElementById(\'topbar-more-menu\')?.remove()">📁 New Folder</div>' +
-    '<div class="topbar-overflow-item" onclick="downloadPhotosAsZip();document.getElementById(\'topbar-more-menu\')?.remove()">⬇ Download All as ZIP</div>' +
-    '<div class="topbar-overflow-item" onclick="document.getElementById(\'photo-zip-upload\').click();document.getElementById(\'topbar-more-menu\')?.remove()">⬆ Upload from ZIP</div>';
+function _pvToggleMenu(e) {
+  e.stopPropagation();
+  document.getElementById('pv-menu')?.classList.toggle('open');
 }
 
+// ── Viewer zoom/pan mechanics ──
+function _pvApply() {
+  const t = document.getElementById('pv-transform');
+  if (t) t.style.transform = `translate(${_pvPan.x}px, ${_pvPan.y}px) scale(${_pvZoom})`;
+  const stage = document.getElementById('pv-stage');
+  if (stage) stage.style.cursor = _pvZoom > 1 ? 'grab' : '';
+}
+
+// Zoom toward a point (cx, cy relative to stage center)
+function _pvSetZoom(newZoom, cx, cy) {
+  const z = Math.max(1, Math.min(10, newZoom));
+  const k = z / _pvZoom;
+  _pvPan.x = cx - k * (cx - _pvPan.x);
+  _pvPan.y = cy - k * (cy - _pvPan.y);
+  _pvZoom = z;
+  if (z === 1) _pvPan = { x: 0, y: 0 };
+  _pvApply();
+}
+
+function _pvStagePoint(clientX, clientY) {
+  const stage = document.getElementById('pv-stage');
+  const r = stage.getBoundingClientRect();
+  return { x: clientX - r.left - r.width / 2, y: clientY - r.top - r.height / 2 };
+}
+
+function _pvWheel(e) {
+  e.preventDefault();
+  const pt = _pvStagePoint(e.clientX, e.clientY);
+  _pvSetZoom(_pvZoom * (e.deltaY > 0 ? 0.85 : 1.18), pt.x, pt.y);
+}
+
+function _pvDblClick(e) {
+  const pt = _pvStagePoint(e.clientX, e.clientY);
+  _pvSetZoom(_pvZoom > 1 ? 1 : 2.5, pt.x, pt.y);
+}
+
+function _pvMouseDown(e) {
+  if (_pvZoom <= 1 || e.button !== 0) return;
+  e.preventDefault();
+  _pvDrag = { x: e.clientX, y: e.clientY };
+  const stage = document.getElementById('pv-stage');
+  if (stage) stage.style.cursor = 'grabbing';
+}
+function _pvMouseMove(e) {
+  if (!_pvDrag) return;
+  const dx = e.clientX - _pvDrag.x, dy = e.clientY - _pvDrag.y;
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) _pvMoved = true;
+  _pvPan.x += dx; _pvPan.y += dy;
+  _pvDrag = { x: e.clientX, y: e.clientY };
+  _pvApply();
+}
+function _pvMouseUp() {
+  if (!_pvDrag) return;
+  _pvDrag = null;
+  _pvApply();
+}
+
+function _pvTouchStart(e) {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    const [a, b] = e.touches;
+    const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2;
+    _pvPinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: _pvZoom, mid: _pvStagePoint(midX, midY) };
+    _pvDrag = null;
+    return;
+  }
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const now = Date.now();
+    if (now - _pvLastTap < 300) {
+      // double-tap: toggle zoom at tap point
+      e.preventDefault();
+      const pt = _pvStagePoint(t.clientX, t.clientY);
+      _pvSetZoom(_pvZoom > 1 ? 1 : 2.5, pt.x, pt.y);
+      _pvLastTap = 0;
+      return;
+    }
+    _pvLastTap = now;
+    if (_pvZoom > 1) _pvDrag = { x: t.clientX, y: t.clientY };
+  }
+}
+function _pvTouchMove(e) {
+  if (_pvPinch && e.touches.length === 2) {
+    e.preventDefault();
+    const [a, b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const midX = (a.clientX + b.clientX) / 2, midY = (a.clientY + b.clientY) / 2;
+    const mid = _pvStagePoint(midX, midY);
+    _pvSetZoom(_pvPinch.zoom * (dist / _pvPinch.dist), mid.x, mid.y);
+    _pvMoved = true;
+    return;
+  }
+  if (_pvDrag && e.touches.length === 1) {
+    e.preventDefault();
+    const t = e.touches[0];
+    const dx = t.clientX - _pvDrag.x, dy = t.clientY - _pvDrag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) _pvMoved = true;
+    _pvPan.x += dx; _pvPan.y += dy;
+    _pvDrag = { x: t.clientX, y: t.clientY };
+    _pvApply();
+  }
+}
+function _pvTouchEnd(e) {
+  if (e.touches.length < 2) _pvPinch = null;
+  if (e.touches.length === 0) _pvDrag = null;
+}
+
+function savePhotoCaption(idx, value) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const cap = (value || '').trim();
+  if (cap !== (ph.caption || '')) {
+    logChange(`Photo caption updated: "${ph.caption || ph.name || `Photo ${idx+1}`}" → "${cap}"`);
+    ph.caption = cap;
+    save();
+    toast('Caption saved', 'success');
+  }
+}
+
+function rotatePhoto(idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  ph.rotation = ((ph.rotation || 0) + 90) % 360;
+  save();
+  const overlay = document.getElementById('photo-viewer-overlay');
+  if (overlay) openPhotoViewer(idx);
+  else if (state.currentView === 'photos') renderPhotos();
+}
+
+function _photosMenuSheet() {
+  openModal(`
+    <h3>Photos</h3>
+    <div class="sheet-item" onclick="closeModal();document.getElementById('photo-upload').click()"><span class="si-ico">⇪</span><div>Add photos from gallery</div></div>
+    <div class="sheet-item" onclick="closeModal();createPhotoFolder()"><span class="si-ico">📁</span><div>New folder</div></div>
+    <div class="sheet-item" onclick="closeModal();_manageFoldersSheet()"><span class="si-ico">✎</span><div>Manage folders</div></div>
+    <div class="sheet-sep"></div>
+    <div class="sheet-item" onclick="closeModal();downloadPhotosAsZip()"><span class="si-ico">⬇</span><div>Download all as ZIP<div class="si-sub">Keeps folder structure</div></div></div>
+  `);
+}
+
+function _manageFoldersSheet() {
+  const p = getProject();
+  const folders = p.photoFolders || [];
+  if (folders.length === 0) { toast('No folders yet', 'error'); return; }
+  const rows = [];
+  (function walk(parentId, depth) {
+    folders.filter(f => (f.parentId || '') === parentId).forEach(f => {
+      rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:9px 4px 9px ${6 + depth * 18}px;border-bottom:1px solid var(--border)">
+        <span>📁</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px">${esc(f.name)}</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="closeModal();renamePhotoFolder('${f.id}')">✎</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="closeModal();deletePhotoFolder('${f.id}')">✕</button>
+      </div>`);
+      walk(f.id, depth + 1);
+    });
+  })('', 0);
+  openModal(`
+    <h3>Manage Folders</h3>
+    <div style="max-height:55vh;overflow-y:auto">${rows.join('')}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal();createPhotoFolder()">+ New Folder</button>
+      <button class="btn btn-primary" onclick="closeModal()">Done</button>
+    </div>
+  `);
+}
+
+// ═══════════════════════════════════════════
+//  PHOTO GRID + FOLDER CHIPS
+// ═══════════════════════════════════════════
 function renderPhotos() {
-  if (_photoResizeObs) { _photoResizeObs.disconnect(); _photoResizeObs = null; }
   const p = getProject();
   if (!p.photos) p.photos = [];
   if (!p.photoFolders) p.photoFolders = [];
-  _photoEditIdx = -1;
 
-  // Validate current folder still exists
   if (_currentPhotoFolderId !== 'all' && _currentPhotoFolderId !== '' && !p.photoFolders.find(f => f.id === _currentPhotoFolderId)) {
     _currentPhotoFolderId = 'all';
   }
 
-  setTopbarActions(`
-    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-upload').click()">📷 Add Photos</button>
-    <button class="btn btn-primary btn-sm" onclick="document.getElementById('photo-capture').click()">📸 Take Photo</button>
-    <button class="btn btn-ghost btn-sm" onclick="openTopbarMore(_photosPageMoreMenu())">More ▾</button>
-  `);
+  const selectMode = _photoSelectMode;
+  if (selectMode) {
+    setTopbarActions(`<button class="btn btn-ghost btn-sm" onclick="togglePhotoSelectMode()">✕ Cancel</button>`);
+    setFab('');
+  } else {
+    setTopbarActions(`
+      <button class="btn btn-ghost btn-sm" onclick="togglePhotoSelectMode()">☑ Select</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photo-upload').click()">⇪ Add</button>
+      <button class="btn btn-ghost btn-sm btn-icon" onclick="_photosMenuSheet()">⋯</button>
+    `);
+    setFab(`<button class="fab" onclick="document.getElementById('photo-capture').click()" title="Take photo">${CAM_SVG}</button>`);
+  }
 
-  // Generate thumbnails for existing photos that don't have them (background migration)
-  const needsThumb = p.photos.filter(ph => ph.data && !ph.thumb);
-  if (needsThumb.length > 0) {
-    (async () => {
-      for (const ph of needsThumb) {
-        ph.thumb = await _generateThumb(ph.data) || '';
-      }
-      save();
-      // Re-render only if still on photos view
-      if (state.currentView === 'photos' && _photoEditIdx < 0) renderPhotos();
-    })();
+  // Background pass: create missing thumbnails and upgrade old low-res ones
+  _thumbUpgradePass(p);
+
+  // Tag filter whose target vanished (device deleted) resets itself
+  if (_photoTagFilter && !p.photos.some(ph => (ph.assignments || []).some(a => a && a.itemId === _photoTagFilter))) {
+    _photoTagFilter = '';
   }
 
   // Filter photos for current view (include subfolders when viewing a parent)
@@ -120,38 +329,73 @@ function renderPhotos() {
     const matchIds = _getFolderAndDescendantIds(_currentPhotoFolderId);
     visiblePhotos = p.photos.map((ph, idx) => ({ ph, idx })).filter(({ ph }) => matchIds.has(ph.folderId));
   }
+  if (_photoTagFilter) {
+    visiblePhotos = visiblePhotos.filter(({ ph }) => (ph.assignments || []).some(a => a && a.itemId === _photoTagFilter));
+  }
 
-  // Build folder sidebar with nested tree
   const allCount = p.photos.length;
   const unfiledCount = p.photos.filter(ph => !ph.folderId).length;
-  // Ensure parentId exists on all folders
   p.photoFolders.forEach(f => { if (f.parentId === undefined) f.parentId = ''; });
-  const folderTree = _buildFolderTree(p.photoFolders, p.photos, '');
-  const folderItems = `
-    <div class="photo-folder-item ${_currentPhotoFolderId === 'all' ? 'active' : ''}" onclick="setPhotoFolder('all')">
-      <span>📷</span><span>All Photos</span><span class="photo-folder-count">${allCount}</span>
-    </div>
-    <div class="photo-folder-item ${_currentPhotoFolderId === '' ? 'active' : ''}" onclick="setPhotoFolder('')">
-      <span>📄</span><span>Unfiled</span><span class="photo-folder-count">${unfiledCount}</span>
-    </div>
-    <div style="border-top:1px solid var(--border);margin:6px 0"></div>
-    ${folderTree}
-    <div style="margin-top:8px">
-      <button class="btn btn-ghost btn-sm" style="width:100%;font-size:11px" onclick="createPhotoFolder()">+ New Folder</button>
-    </div>`;
 
-  // Build photo grid
+  // Folder filter chips (tree flattened, children indented with ›)
+  const folderChips = [];
+  (function walk(parentId, depth) {
+    p.photoFolders.filter(f => (f.parentId || '') === parentId).forEach(f => {
+      const cnt = p.photos.filter(ph => _getFolderAndDescendantIds(f.id).has(ph.folderId)).length;
+      folderChips.push(`<div class="filter-tab ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')">${'› '.repeat(depth)}📁 ${esc(f.name)} (${cnt})</div>`);
+      walk(f.id, depth + 1);
+    });
+  })('', 0);
+  // Device / rack tag chips — every tagged item gets its own "label" to browse under
+  const tagCounts = {};
+  p.photos.forEach(ph => (ph.assignments || []).forEach(a => { if (a?.itemId) tagCounts[a.itemId] = (tagCounts[a.itemId] || 0) + 1; }));
+  const tagChipDefs = Object.entries(tagCounts).map(([itemId, cnt]) => {
+    if (itemId.startsWith('dev:')) {
+      const d = p.devices.find(x => x.id === itemId.slice(4));
+      return d ? { itemId, cnt, name: d.name, color: dtColor(d.deviceType || 'Misc.'), dot: true } : null;
+    }
+    if (itemId.startsWith('rack:')) {
+      const r = p.racks.find(x => x.id === itemId.slice(5));
+      return r ? { itemId, cnt, name: r.name, color: 'var(--green)', dot: false } : null;
+    }
+    return null;
+  }).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const tagRow = tagChipDefs.length ? `
+    <div class="chip-row" style="margin-bottom:10px">
+      <span class="pcg-label">🏷 Tagged</span>
+      ${tagChipDefs.map(t => {
+        const on = _photoTagFilter === t.itemId;
+        return `<div class="filter-tab ${on ? 'active' : ''}" style="${on ? `border-color:${t.color};color:${t.color};` : ''}" onclick="setPhotoTag('${t.itemId}')">${t.dot ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${t.color};margin-right:5px"></span>` : '▤ '}${esc(t.name)} (${t.cnt})</div>`;
+      }).join('')}
+    </div>` : '';
+
+  const groupMode = _photoGroupMode && !selectMode;
+  const folderItems = groupMode ? `
+    <div class="chip-row" style="margin-bottom:10px">
+      <div class="filter-tab" onclick="togglePhotoGroupMode()">${CAM_SVG} All (${allCount})</div>
+      <div class="filter-tab active" onclick="togglePhotoGroupMode()">▤ By Room</div>
+    </div>` : `
+    <div class="chip-row" style="margin-bottom:${tagChipDefs.length ? '6' : '10'}px">
+      <div class="filter-tab ${_currentPhotoFolderId === 'all' && !_photoTagFilter ? 'active' : ''}" onclick="setPhotoFolder('all')">${CAM_SVG} All (${allCount})</div>
+      <div class="filter-tab" onclick="togglePhotoGroupMode()">▤ By Room</div>
+      <div class="filter-tab ${_currentPhotoFolderId === '' ? 'active' : ''}" onclick="setPhotoFolder('')">Unfiled (${unfiledCount})</div>
+      ${folderChips.join('')}
+      <div class="filter-tab" onclick="createPhotoFolder()">＋ 📁</div>
+    </div>${tagRow}`;
+
   let gridContent;
   if (p.photos.length === 0) {
     gridContent = `
       <div class="empty-state">
-        <div class="empty-icon">📷</div>
+        <div class="empty-icon">${CAM_SVG}</div>
         <h3>No photos yet</h3>
         <p>Upload photos of your network closets, equipment, or cable runs.</p>
         <button class="btn btn-primary" style="margin-top:8px" onclick="document.getElementById('photo-upload').click()">
           Add First Photo
         </button>
       </div>`;
+  } else if (groupMode) {
+    gridContent = _photoRoomsHtml(p);
   } else if (visiblePhotos.length === 0) {
     const folderName = _currentPhotoFolderId === ''
       ? 'Unfiled'
@@ -168,56 +412,144 @@ function renderPhotos() {
   } else {
     _viewerPhotoIndices = visiblePhotos.map(({ idx }) => idx);
     const grid = visiblePhotos.map(({ ph, idx }) => {
-      const assigned = (ph.assignments||[]).filter(a=>a&&a.itemId).length;
       const folderObj = ph.folderId ? p.photoFolders.find(f => f.id === ph.folderId) : null;
       const folderBadge = folderObj && _currentPhotoFolderId === 'all'
         ? `<div class="photo-folder-badge">📁 ${esc(folderObj.name)}</div>` : '';
+      const sel = _photoSel.has(ph.id);
+      const tagCount = (ph.assignments || []).filter(Boolean).length;
       return `
-      <div class="photo-card" onclick="openPhotoViewer(${idx})">
+      <div class="photo-card ${selectMode && sel ? 'psel' : ''}" onclick="${selectMode ? `togglePhotoSel('${ph.id}')` : `openPhotoViewer(${idx})`}">
         <div class="photo-thumb" style="background-image:url('${ph.thumb || ph.data}')${ph.rotation ? ';transform:rotate('+ph.rotation+'deg)' : ''}"></div>
         <div class="photo-meta">
           <div class="photo-title">${esc(ph.caption || ph.name || 'Photo ' + (idx+1))}</div>
-          <div class="photo-date">${ph.ts ? new Date(ph.ts).toLocaleDateString() : (ph.date ? new Date(ph.date).toLocaleDateString() : '')}${assigned?` · <span style="color:var(--accent)">${assigned} tagged</span>`:''}</div>
+          <div class="photo-date">${ph.ts ? new Date(ph.ts).toLocaleDateString() : (ph.date ? new Date(ph.date).toLocaleDateString() : '')}</div>
         </div>
+        ${tagCount && !selectMode ? `<div class="photo-tag-badge">🏷 ${tagCount}</div>` : ''}
         ${folderBadge}
-        <div class="photo-card-actions">
-          <button class="photo-card-btn" title="Download original" onclick="event.stopPropagation();downloadOriginalPhoto(${idx})">⬇</button>
-          <button class="photo-card-btn" title="Download with labels" onclick="event.stopPropagation();downloadLabeledPhoto(${idx})">🏷</button>
-          ${p.photoFolders.length > 0 ? `<button class="photo-card-btn" title="Move to folder" onclick="event.stopPropagation();movePhotoToFolder(${idx})">📁</button>` : ''}
-        </div>
-        <button class="photo-del" title="Delete" onclick="event.stopPropagation();deletePhoto(${idx})">✕</button>
+        ${selectMode ? `<div class="photo-sel-badge ${sel ? 'on' : ''}">${sel ? '✓' : ''}</div>` : ''}
       </div>`;
     }).join('');
     gridContent = `<div class="photo-grid">${grid}</div>`;
   }
 
-  document.getElementById('view-area').innerHTML = `
-    <div class="photo-view-wrap">
-      <div class="photo-folder-sidebar" id="photo-folder-sidebar">${folderItems}</div>
-      <div class="photo-folder-resize" id="photo-folder-resize"></div>
-      <div class="photo-grid-area">${gridContent}</div>
-    </div>`;
+  const selCount = _photoSel.size;
+  const bulkBar = selectMode && selCount > 0 ? `
+    <div class="bulk-bar">
+      <span class="bulk-count">${selCount} selected</span>
+      <button class="btn btn-ghost btn-sm" onclick="selectAllVisiblePhotos()">All</button>
+      <button class="btn btn-danger btn-sm" onclick="bulkDeletePhotos()">✕ Delete</button>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="togglePhotoSelectMode()">Done</button>
+    </div>` : '';
 
-  // Draggable resize handle for folder sidebar
-  const resizeHandle = document.getElementById('photo-folder-resize');
-  const sidebar = document.getElementById('photo-folder-sidebar');
-  if (resizeHandle && sidebar) {
-    let dragging = false, startX = 0, startW = 0;
-    resizeHandle.addEventListener('pointerdown', e => {
-      dragging = true; startX = e.clientX; startW = sidebar.offsetWidth;
-      resizeHandle.setPointerCapture(e.pointerId);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    });
-    resizeHandle.addEventListener('pointermove', e => {
-      if (!dragging) return;
-      const w = Math.max(120, Math.min(500, startW + (e.clientX - startX)));
-      sidebar.style.width = w + 'px';
-    });
-    const stopDrag = () => { dragging = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; };
-    resizeHandle.addEventListener('pointerup', stopDrag);
-    resizeHandle.addEventListener('pointercancel', stopDrag);
-  }
+  document.getElementById('view-area').innerHTML =
+    (selectMode ? '' : siteMapsSectionHtml()) +
+    folderItems +
+    (selectMode ? `<div style="font-size:12px;color:var(--text2);margin:-2px 0 10px">Tap photos to select them${selCount === 0 ? '' : ` — ${selCount} selected`}</div>` : '') +
+    gridContent + bulkBar;
+}
+
+// ── Select mode (edit / bulk delete) ──
+function togglePhotoSelectMode() {
+  _photoSelectMode = !_photoSelectMode;
+  if (!_photoSelectMode) _photoSel.clear();
+  renderPhotos();
+}
+
+function togglePhotoSel(photoId) {
+  if (_photoSel.has(photoId)) _photoSel.delete(photoId);
+  else _photoSel.add(photoId);
+  renderPhotos();
+}
+
+function selectAllVisiblePhotos() {
+  const p = getProject();
+  _viewerPhotoIndices.forEach(idx => {
+    const ph = p.photos[idx];
+    if (ph?.id) _photoSel.add(ph.id);
+  });
+  renderPhotos();
+}
+
+function bulkDeletePhotos() {
+  const n = _photoSel.size;
+  if (!n) return;
+  openModal(`
+    <h3 style="color:var(--red)">⚠ Delete ${n} Photo${n!==1?'s':''}?</h3>
+    <p style="color:var(--text2);font-size:13.5px;margin-bottom:16px">The selected photo${n!==1?'s':''} will move to Trash and stay recoverable for 30 days (⋮ menu → Trash).</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="executeBulkPhotoDelete()">Delete ${n} Photo${n!==1?'s':''}</button>
+    </div>`);
+}
+
+function executeBulkPhotoDelete() {
+  const p = getProject();
+  const ids = new Set(_photoSel);
+  const doomed = p.photos.filter(ph => ids.has(ph.id));
+  if (!p.photoTrash) p.photoTrash = [];
+  const now = new Date().toISOString();
+  doomed.forEach(ph => p.photoTrash.unshift({ ...ph, deletedAt: now }));
+  p.photos = p.photos.filter(ph => !ids.has(ph.id));
+  logChange(`Deleted ${doomed.length} photo${doomed.length!==1?'s':''}`);
+  _photoSel.clear();
+  _photoSelectMode = false;
+  save();
+  closeModal();
+  renderPhotos();
+  toast(`${doomed.length} photo${doomed.length!==1?'s':''} moved to Trash`, 'success');
+}
+
+// ═══════════════════════════════════════════
+//  PHOTO TAGGING — link photos to devices/racks
+//  (same ph.assignments shape the legacy pin
+//  editor used, so old tags keep working)
+// ═══════════════════════════════════════════
+function openPhotoTagSheet(idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  const tagged = new Set((ph.assignments || []).filter(Boolean).map(a => a.itemId));
+  const row = (itemId, color, shape, name, sub) => `
+    <div class="sheet-item tag-row" data-item="${itemId}" onclick="_togglePhotoTag(this,${idx})">
+      <span class="si-ico" style="color:${color}">${shape}</span>
+      <div style="flex:1;min-width:0">${esc(name)}${sub ? `<div class="si-sub">${esc(sub)}</div>` : ''}</div>
+      <span class="tag-check" style="opacity:${tagged.has(itemId) ? 1 : .15}">✓</span>
+    </div>`;
+  const rackRows = p.racks.map(r => row('rack:' + r.id, 'var(--green)', '▤', r.name, r.location || '')).join('');
+  const devRows = [...p.devices].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map(d => row('dev:' + d.id, dtColor(d.deviceType || 'Misc.'), '●', d.name, (d.deviceType || '') + (d.ip ? ' · ' + d.ip : ''))).join('');
+  openModal(`
+    <h3>🏷 Tag Photo</h3>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Tagged photos show up on the device's search card.</p>
+    <input class="form-control" id="tag-filter" placeholder="Filter…" oninput="_filterTagRows(this.value)" style="margin-bottom:8px">
+    <div style="max-height:46vh;overflow-y:auto" id="tag-rows">
+      ${rackRows ? `<div class="pcg-label">▤ Racks</div>${rackRows}` : ''}
+      ${devRows ? `<div class="pcg-label">◈ Devices</div>${devRows}` : '<p style="color:var(--text3);font-size:13px">No devices in this project</p>'}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeModal();if(state.currentView==='photos')renderPhotos()">Done</button>
+    </div>`);
+}
+
+function _togglePhotoTag(rowEl, idx) {
+  const p = getProject();
+  const ph = p.photos[idx];
+  if (!ph) return;
+  if (!ph.assignments) ph.assignments = [];
+  const itemId = rowEl.dataset.item;
+  const had = ph.assignments.some(a => a && a.itemId === itemId);
+  if (had) ph.assignments = ph.assignments.filter(a => !(a && a.itemId === itemId));
+  else ph.assignments.push({ itemId });
+  const check = rowEl.querySelector('.tag-check');
+  if (check) check.style.opacity = had ? .15 : 1;
+  save();
+}
+
+function _filterTagRows(q) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll('#tag-rows .tag-row').forEach(r => {
+    r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
 }
 
 // Get a folder and all its descendant IDs (for filtering photos in a folder tree)
@@ -237,39 +569,6 @@ function _getFolderAndDescendantIds(folderId) {
   return ids;
 }
 
-// Build folder tree HTML recursively
-function _buildFolderTree(folders, photos, parentId) {
-  const children = folders.filter(f => (f.parentId || '') === parentId);
-  if (children.length === 0) return '';
-  return children.map(f => {
-    const descendantIds = _getFolderAndDescendantIds(f.id);
-    const cnt = photos.filter(ph => descendantIds.has(ph.folderId)).length;
-    const depth = _getFolderDepth(folders, f.id);
-    const indent = depth * 16;
-    const sub = _buildFolderTree(folders, photos, f.id);
-    return `<div class="photo-folder-item ${_currentPhotoFolderId === f.id ? 'active' : ''}" onclick="setPhotoFolder('${f.id}')" style="padding-left:${8 + indent}px">
-      <span>${sub ? '📂' : '📁'}</span>
-      <span style="flex:1;min-width:0;word-break:break-word">${esc(f.name)}</span>
-      <span class="photo-folder-count">${cnt}</span>
-      <span class="photo-folder-actions">
-        <button class="photo-folder-btn" title="Rename" onclick="event.stopPropagation();renamePhotoFolder('${f.id}')">✎</button>
-        <button class="photo-folder-btn" title="Delete folder" onclick="event.stopPropagation();deletePhotoFolder('${f.id}')">✕</button>
-      </span>
-    </div>${sub}`;
-  }).join('');
-}
-
-function _getFolderDepth(folders, id) {
-  let depth = 0;
-  let current = folders.find(f => f.id === id);
-  while (current?.parentId) {
-    depth++;
-    current = folders.find(f => f.id === current.parentId);
-    if (depth > 10) break; // safety
-  }
-  return depth;
-}
-
 // Build flat <option> list with indentation for folder pickers
 function _buildFolderOptions(folders, selectedId, excludeId) {
   const opts = [];
@@ -277,7 +576,7 @@ function _buildFolderOptions(folders, selectedId, excludeId) {
     const children = folders.filter(f => (f.parentId || '') === parentId);
     for (const f of children) {
       if (f.id === excludeId) continue;
-      const prefix = '\u00A0\u00A0'.repeat(depth);
+      const prefix = '  '.repeat(depth);
       opts.push(`<option value="${f.id}" ${f.id === selectedId ? 'selected' : ''}>${prefix}${esc(f.name)}</option>`);
       walk(f.id, depth + 1);
     }
@@ -288,15 +587,124 @@ function _buildFolderOptions(folders, selectedId, excludeId) {
 
 function setPhotoFolder(folderId) {
   _currentPhotoFolderId = folderId;
+  _photoTagFilter = '';
   renderPhotos();
+}
+
+function setPhotoTag(itemId) {
+  _photoTagFilter = (_photoTagFilter === itemId) ? '' : itemId;
+  if (_photoTagFilter) { _currentPhotoFolderId = 'all'; _photoGroupMode = false; }
+  renderPhotos();
+}
+
+// ═══════════════════════════════════════════
+//  "BY ROOM" VIEW — rooms (rack locations) →
+//  rack sub-groups → rack photos + photos of
+//  every device in or wired to that rack,
+//  each thumb labeled with the device name.
+// ═══════════════════════════════════════════
+function togglePhotoGroupMode() {
+  _photoGroupMode = !_photoGroupMode;
+  if (_photoGroupMode) { _photoTagFilter = ''; _currentPhotoFolderId = 'all'; }
+  renderPhotos();
+}
+
+function _openGroupPhoto(key, idx) {
+  _viewerPhotoIndices = _photoGroups[key] || [];
+  openPhotoViewer(idx);
+}
+
+// The rack a device "lives" in: its own rack, else the rack of the gear its
+// circuit lands on — so a lobby camera groups under the closet that feeds it.
+function _devHomeRack(d, p) {
+  if (d.rackId) return p.racks.find(r => r.id === d.rackId) || null;
+  for (const e of p.devices) {
+    if (!e.rackId || (e.ports || 0) === 0 || e.id === d.id) continue;
+    for (let i = 1; i <= (e.ports || 0); i++) {
+      const c = getPortCircuit(e, i, p);
+      if ((c.content && c.content.id === d.id) || (c.assigned && c.assigned.id === d.id) || (c.end && c.end.id === d.id)) {
+        return p.racks.find(r => r.id === e.rackId) || null;
+      }
+    }
+  }
+  return null;
+}
+
+function _photoRoomsHtml(p) {
+  _photoGroups = {};
+  const byItem = {};
+  p.photos.forEach((ph, idx) => (ph.assignments || []).forEach(a => {
+    if (a?.itemId) (byItem[a.itemId] = byItem[a.itemId] || []).push({ ph, idx });
+  }));
+  const taggedIdx = new Set();
+  Object.values(byItem).forEach(list => list.forEach(e => taggedIdx.add(e.idx)));
+
+  const rackGroups = p.racks.map(r => ({ rack: r, entries: [], seen: new Set() }));
+  const groupFor = rack => rackGroups.find(g => g.rack.id === rack.id);
+  const pushEntry = (g, e, label, color) => {
+    if (g.seen.has(e.idx)) return;
+    g.seen.add(e.idx);
+    g.entries.push({ ...e, label, color });
+  };
+
+  // Rack's own photos lead each group
+  p.racks.forEach(r => {
+    (byItem['rack:' + r.id] || []).forEach(e => pushEntry(groupFor(r), e, r.name, 'var(--green)'));
+  });
+  // Then device photos: mounted gear top-to-bottom (by U), then connected gear by name
+  const unplaced = { entries: [], seen: new Set() };
+  const devsWithPhotos = p.devices.filter(d => (byItem['dev:' + d.id] || []).length)
+    .sort((a, b) => ((a.rackU || 999) - (b.rackU || 999)) || (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+  devsWithPhotos.forEach(d => {
+    const home = _devHomeRack(d, p);
+    const g = home ? groupFor(home) : null;
+    const color = dtColor(d.deviceType || 'Misc.');
+    (byItem['dev:' + d.id] || []).forEach(e => pushEntry(g || unplaced, e, d.name, color));
+  });
+
+  const rooms = {};
+  rackGroups.filter(g => g.entries.length).forEach(g => {
+    const room = g.rack.location || g.rack.name;
+    (rooms[room] = rooms[room] || []).push(g);
+  });
+
+  const grid = (key, entries) => {
+    _photoGroups[key] = entries.map(e => e.idx);
+    return `<div class="photo-grid" style="margin-bottom:14px">` + entries.map(e => `
+      <div class="photo-card" onclick="_openGroupPhoto('${key}',${e.idx})">
+        <div class="photo-thumb" style="background-image:url('${e.ph.thumb || e.ph.data || ''}')${e.ph.rotation ? ';transform:rotate(' + e.ph.rotation + 'deg)' : ''}"></div>
+        <div class="photo-meta">
+          <div class="photo-title"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${e.color};margin-right:5px"></span>${esc(e.label)}</div>
+          <div class="photo-date">${esc(e.ph.caption || e.ph.name || '')}</div>
+        </div>
+      </div>`).join('') + `</div>`;
+  };
+
+  let html = '';
+  Object.keys(rooms).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).forEach(room => {
+    html += `<div class="section-hdr" style="margin-top:14px"><span class="sh-title">⌖ ${esc(room)}</span></div>`;
+    rooms[room].forEach(g => {
+      html += `<div class="pcg-label" style="padding:0 0 8px">▤ ${esc(g.rack.name)} · ${g.entries.length} photo${g.entries.length !== 1 ? 's' : ''}</div>`;
+      html += grid('rack:' + g.rack.id, g.entries);
+    });
+  });
+  if (unplaced.entries.length) {
+    html += `<div class="section-hdr" style="margin-top:14px"><span class="sh-title">◈ Unplaced equipment</span></div>`;
+    html += grid('unplaced', unplaced.entries);
+  }
+  const untagged = p.photos.length - taggedIdx.size;
+  if (!html) {
+    html = `<div class="empty-state"><div class="empty-icon">▤</div><h3>No equipment-tagged photos</h3><p>Tag photos to a device or rack (viewer ⋯ → Tag), or shoot from a device's editor — they group here by room and rack.</p></div>`;
+  } else if (untagged > 0) {
+    html += `<div style="color:var(--text3);font-size:12px;font-family:var(--mono);padding:6px 2px 12px">${untagged} photo${untagged !== 1 ? 's' : ''} without equipment tags — tap "All" to see everything.</div>`;
+  }
+  return html;
 }
 
 function _getPhotoFolderLocations() {
   const p = getProject();
   const locs = new Map();
-  // Locations from the location hierarchy
   (p.locations || []).forEach(l => locs.set(l.name, l.name));
-  // Unique rack locations
   (p.racks || []).forEach(r => { if (r.location) locs.set(r.location, r.location); });
   return Array.from(locs.values()).sort((a, b) => a.localeCompare(b));
 }
@@ -449,10 +857,8 @@ function deletePhotoFolder(id) {
   if (childCount > 0) extra.push(`${childCount} subfolder${childCount>1?'s':''} moved up`);
   const msg = `Delete folder "${folder.name}"?` + (extra.length ? ' ' + extra.join(', ') + '.' : '');
   if (!confirm(msg)) return;
-  // Move photos to parent folder (or unfiled if root)
   const newParent = folder.parentId || '';
   p.photos.forEach(ph => { if (ph.folderId === id) ph.folderId = newParent; });
-  // Reparent child folders to deleted folder's parent
   p.photoFolders.forEach(f => { if (f.parentId === id) f.parentId = newParent; });
   p.photoFolders = p.photoFolders.filter(f => f.id !== id);
   logChange(`Photo folder deleted: "${folder.name}"`);
@@ -490,21 +896,77 @@ function saveMovePhoto(idx) {
   const ph = p.photos[idx];
   if (!ph) return;
   const newFolder = document.getElementById('pmf-folder')?.value || '';
-  const oldFolderObj = ph.folderId ? p.photoFolders?.find(f => f.id === ph.folderId) : null;
   const newFolderObj = newFolder ? p.photoFolders?.find(f => f.id === newFolder) : null;
   ph.folderId = newFolder;
   logChange(`Photo moved: "${ph.caption || ph.name}" → ${newFolderObj ? '"' + newFolderObj.name + '"' : 'Unfiled'}`);
   save();
   closeModal();
-  renderPhotos();
+  if (state.currentView === 'photos') renderPhotos();
   toast(`Photo moved to ${newFolderObj ? '"' + newFolderObj.name + '"' : 'Unfiled'}`, 'success');
 }
 
+// ═══════════════════════════════════════════
+//  THUMBNAIL UPGRADE (background)
+// ═══════════════════════════════════════════
+// Regenerates missing thumbs and upgrades pre-existing low-res (≤480px) thumbs
+// from the locally stored originals. Never downloads from Drive just for thumbs.
+let _thumbPassRunning = false;
+const _thumbPassDone = new Set();
+
+function _imgNaturalWidth(src) {
+  return new Promise(res => {
+    const i = new Image();
+    i.onload = () => res(i.naturalWidth);
+    i.onerror = () => res(0);
+    i.src = src;
+  });
+}
+
+async function _thumbUpgradePass(p) {
+  if (_thumbPassRunning) return;
+  _thumbPassRunning = true;
+  try {
+    let changed = 0;
+    for (const ph of p.photos) {
+      if (!ph.id || _thumbPassDone.has(ph.id)) continue;
+      _thumbPassDone.add(ph.id);
+      let needs = !ph.thumb;
+      if (ph.thumb) {
+        const w = await _imgNaturalWidth(ph.thumb);
+        needs = w > 0 && w < 700;
+      }
+      if (!needs) continue;
+      const src = ph.data || await _idbGetPhotoData(ph.id);
+      if (!src) continue;
+      const t = await _generateThumb(src);
+      if (t) changed++;
+      if (t) ph.thumb = t;
+      // Yield between photos so decoding doesn't jank the UI
+      await new Promise(r => setTimeout(r, 30));
+      if (state.currentView !== 'photos') break;
+    }
+    if (changed > 0) {
+      save();
+      if (state.currentView === 'photos') renderPhotos();
+    }
+  } catch (e) {
+    console.warn('Thumb upgrade pass failed:', e);
+  } finally {
+    _thumbPassRunning = false;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  UPLOAD / DELETE
+// ═══════════════════════════════════════════
 async function uploadPhotos(e) {
   const p = getProject();
   if (!p.photos) p.photos = [];
   const files = Array.from(e.target.files);
+  const tagDevId = _pendingPhotoDevId;
+  _pendingPhotoDevId = null;
   if (!files.length) return;
+  const tagDev = tagDevId ? p.devices.find(d => d.id === tagDevId) : null;
   const input = e.target;
   let added = 0;
 
@@ -518,11 +980,11 @@ async function uploadPhotos(e) {
         reader.readAsDataURL(blob);
       });
       const thumb = await _generateThumb(dataUrl);
-      const folderId = (_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '';
+      const folderId = tagDev ? '' : ((_currentPhotoFolderId !== 'all') ? _currentPhotoFolderId : '');
       const photoId = genId();
       await _idbSavePhotoData(photoId, dataUrl);
-      p.photos.push({ id: photoId, name: file.name, caption: '', data: null, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, dataLen: dataUrl.length, assignments: [], folderId: folderId || '' });
-      logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
+      p.photos.push({ id: photoId, name: file.name, caption: tagDev ? tagDev.name : '', data: null, thumb: thumb || '', ts: new Date().toISOString(), date: Date.now(), size: file.size, dataLen: dataUrl.length, assignments: tagDev ? [{ itemId: 'dev:' + tagDev.id }] : [], folderId: folderId || '' });
+      logChange(`Photo added: "${file.name}" (${(file.size/1024).toFixed(0)} KB)${tagDev ? ` — tagged ${tagDev.name}` : ''}`);
       added++;
     } catch(err) { console.error('Photo add error:', err); }
   }
@@ -530,8 +992,17 @@ async function uploadPhotos(e) {
   if (added > 0) {
     save();
     if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
-    renderPhotos();
-    toast(`Added ${added} photo${added>1?'s':''}`, 'success');
+    if (tagDev) {
+      // Shot from the device editor — go straight back to it with the new thumbs
+      editDevice(tagDev.id);
+    } else if (state.currentView === 'photos') {
+      renderPhotos();
+    } else {
+      // Taken from Home's quick action? Jump to Photos properly instead of
+      // painting the photo grid into whatever view is showing.
+      setView('photos');
+    }
+    toast(`Added ${added} photo${added>1?'s':''}${tagDev ? ` to ${tagDev.name}` : ''}`, 'success');
   }
   else { toast('Could not add photos', 'error'); }
   try { input.value = ''; } catch(e) {}
@@ -540,911 +1011,42 @@ async function uploadPhotos(e) {
 function deletePhoto(idx) {
   const p = getProject();
   if (!p.photos) return;
-  if (!confirm('Delete this photo?')) return;
+  if (!confirm('Delete this photo? It moves to Trash for 30 days (⋮ menu → Trash).')) return;
   const ph = p.photos[idx];
   const name = ph?.caption || ph?.name || `Photo ${idx+1}`;
-  if (ph?.id) _idbDeletePhotoData(ph.id).catch(() => {});
+  if (!p.photoTrash) p.photoTrash = [];
+  if (ph) p.photoTrash.unshift({ ...ph, deletedAt: new Date().toISOString() });
   p.photos.splice(idx, 1);
   logChange(`Photo deleted: "${name}"`);
-  save(); renderPhotos(); toast('Photo deleted', 'success');
-}
-
-// Build organized <option> list for item picker
-function buildPhotoItemOptions(p) {
-  let opts = `<option value="">— None —</option>`;
-  opts += `<option value="__new_device__">➕  Create new device…</option>`;
-  opts += `<option value="__note__">📝  Add note tag (photo-only)…</option>`;
-  // Racks
-  const racks = p.racks || [];
-  opts += `<option disabled>────── RACKS ──────</option>`;
-  racks.forEach(r => { opts += `<option value="rack:${r.id}">${esc(r.name)}</option>`; });
-  opts += `<option value="__new_rack__">➕  Add new rack…</option>`;
-  // Patch Panels
-  const panels = p.devices.filter(d => d.deviceType === 'Patch Panel');
-  if (panels.length) {
-    opts += `<option disabled>────── PATCH PANELS ──────</option>`;
-    panels.forEach(d => {
-      const meta = [d.model].filter(Boolean).join(' · ');
-      opts += `<option value="dev:${d.id}">${esc(d.name)}${meta?' · '+esc(meta):''}</option>`;
-    });
-  }
-  // Devices grouped by type
-  const devsByType = {};
-  p.devices.filter(d => d.deviceType !== 'Patch Panel').forEach(d => {
-    const t = d.deviceType || 'Misc.';
-    if (!devsByType[t]) devsByType[t] = [];
-    devsByType[t].push(d);
-  });
-  const typeOrder = ['Switch','Router','Firewall','Modem','Server','NAS','AP','PC/Workstation','IP Phone','IP Camera','Access Control','APC/UPS','Misc Rack-Mounted','IoT Device','Printer','Fax Machine','Smartphone/Tablet','Misc.'];
-  const sorted = [...typeOrder.filter(t => devsByType[t]), ...Object.keys(devsByType).filter(t => !typeOrder.includes(t))];
-  if (sorted.length) {
-    opts += `<option disabled>────── DEVICES ──────</option>`;
-    sorted.forEach(type => {
-      opts += `<option disabled>  · ${type}</option>`;
-      devsByType[type].forEach(d => {
-        const meta = [d.ip, d.mac].filter(Boolean).join('  ');
-        opts += `<option value="dev:${d.id}">    ${esc(d.name)}${meta?'  —  '+esc(meta):''}</option>`;
-      });
-    });
-  }
-  return opts;
-}
-
-// Resolve an assignment item to { label, color, notes }
-function resolvePhotoItem(itemRef, p) {
-  if (!itemRef) return null;
-  const colonIdx = itemRef.indexOf(':');
-  const kind = itemRef.slice(0, colonIdx);
-  const id = itemRef.slice(colonIdx + 1);
-  if (kind === 'note') {
-    return { label: id, color: '#ffd54f', notes: '' };
-  }
-  if (kind === 'rack') {
-    const r = (p.racks||[]).find(x => x.id === id);
-    if (!r) return null;
-    return { label: r.name, color: '#888', notes: r.notes || '' };
-  }
-  const d = p.devices.find(x => x.id === id);
-  if (!d) return null;
-  return { label: d.name, color: dtColor(d.deviceType||'Misc.'), notes: d.notes || '' };
-}
-
-async function openPhotoEditor(idx, preservePanZoom) {
-  const isNewPhoto = (idx !== _photoEditIdx);
-  _photoEditIdx = idx;
-  if (!preservePanZoom) { _photoPan = { x: 0, y: 0 }; _photoZoom = 1; }
-  const p = getProject();
-  const ph = p.photos[idx];
-  // Load full-res data on demand for the editor
-  if (!ph.data && ph.id) ph._editorSrc = await _lazyGetPhotoData(ph.id) || ph.thumb || '';
-  else ph._editorSrc = ph.data || ph.thumb || '';
-  if (!ph) return;
-  if (!ph.assignments || ph.assignments.length === 0) ph.assignments = [{ color: SLOT_COLORS[0] }];
-  // Only auto-lock when the user navigates to a photo, not on re-renders (saves, drops, etc.)
-  if (isNewPhoto && ph.assignments.some(a => a?.itemId && a.x != null)) _photoLayoutLocked = true;
-
-  const total = p.photos.length;
-
-  const slots = ph.assignments.map((a, si) => {
-    const c = a?.color || SLOT_COLORS[si % SLOT_COLORS.length];
-    const val = a?.itemId || '';
-    const hasPos = a?.x != null;
-    const res = val ? resolvePhotoItem(val, p) : null;
-    return `
-    <div class="photo-assign-slot" id="slot-card-${si}">
-      <div class="photo-assign-slot-header">
-        <div style="position:relative;display:inline-flex;cursor:${_photoLayoutLocked?'default':'pointer'}" title="${_photoLayoutLocked?'Unlock to change color':'Click to change color'}">
-          <div class="photo-assign-dot" style="background:${c};box-shadow:0 0 5px ${c}88"></div>
-          <input type="color" value="${c}" ${_photoLayoutLocked?'disabled':''} style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:inherit;border:0;padding:0" onchange="setTagColor(${si},this.value)">
-        </div>
-        <span style="color:${c};font-weight:600">Tag ${si+1}</span>
-        ${!_photoLayoutLocked && val && hasPos
-          ? `<button style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:9px;color:var(--red);padding:0 2px" title="Remove from photo" onclick="removePhotoMarker(${si})">✕ remove pin</button>`
-          : !_photoLayoutLocked && val
-            ? `<span id="slot-hint-${si}" style="margin-left:auto;font-size:9px;color:var(--accent);cursor:grab" onmousedown="startSidebarDrag(event,${si})" ontouchstart="startSidebarDrag(event,${si})" title="Drag or tap to place">⊕ drag to place</span>`
-            : !_photoLayoutLocked
-              ? `<span style="margin-left:auto;font-size:9px;color:var(--text3)">select below</span>`
-              : `<span style="margin-left:auto;font-size:9px;color:var(--text3);opacity:0.5">🔒 locked</span>`
-        }
-        ${!_photoLayoutLocked ? `<button onclick="removePhotoTag(${si})" style="margin-left:4px;background:none;border:none;cursor:pointer;font-size:11px;color:var(--text3);padding:0 3px;line-height:1;opacity:0.6" onmouseover="this.style.opacity='1';this.style.color='var(--red)'" onmouseout="this.style.opacity='0.6';this.style.color='var(--text3)'" title="Remove this tag slot">🗑</button>` : ''}
-      </div>
-      <select class="form-control" id="slot-sel-${si}" style="font-size:11px;padding:5px 8px${_photoLayoutLocked?';opacity:0.5;pointer-events:none':''}" ${_photoLayoutLocked?'disabled':''} onchange="onPhotoSlotChange(${si},this.value)">
-        ${buildPhotoItemOptions(p)}
-      </select>
-      <div style="display:flex;align-items:center;gap:5px;margin-top:5px">
-        <span style="font-size:9px;color:var(--text3);font-family:var(--mono);flex-shrink:0">Size</span>
-        <input type="range" min="0.5" max="2.5" step="0.1" value="${a?.size||1}" ${_photoLayoutLocked?'disabled':''} oninput="setTagSize(${si},this.value)" style="flex:1;accent-color:${c};cursor:${_photoLayoutLocked?'not-allowed':'pointer'}">
-        <span id="size-label-${si}" style="font-size:9px;color:var(--text3);font-family:var(--mono);min-width:28px;text-align:right">${Math.round((a?.size||1)*100)}%</span>
-      </div>
-    </div>`;
-  }).join('');
-
-  setTopbarActions(`
-    <button class="btn btn-ghost btn-sm" onclick="renderPhotos()">← Back to Photos</button>
-    <span style="color:var(--text3);font-size:12px">${idx+1} / ${total}</span>
-    ${total>1?`<button class="btn btn-ghost btn-sm" onclick="openPhotoEditor(${(idx-1+total)%total})">← Prev</button>`:''}
-    ${total>1?`<button class="btn btn-ghost btn-sm" onclick="openPhotoEditor(${(idx+1)%total})">Next →</button>`:''}
-    <button id="photo-lock-btn" class="btn btn-sm ${_photoLayoutLocked ? 'btn-primary' : 'btn-ghost'}" onclick="togglePhotoLock()" title="${_photoLayoutLocked ? 'Unlock layout to move device tags' : 'Lock layout to prevent accidental moves'}" style="${_photoLayoutLocked ? 'border-color:var(--amber);background:rgba(255,170,0,.15);color:var(--amber)' : ''}">
-      ${_photoLayoutLocked ? '🔒 Layout Locked' : '🔓 Lock Layout'}
-    </button>
-    <button class="btn btn-ghost btn-sm" onclick="downloadOriginalPhoto(${idx})" title="Download original photo">⬇ Original</button>
-    <button class="btn btn-ghost btn-sm" onclick="downloadLabeledPhoto(${idx})" title="Download photo with labels">⬇ Labeled</button>
-    <button class="btn btn-ghost btn-sm" onclick="openTopbarMore(_photoEditorMoreMenu(${idx}))">More ▾</button>
-    <button class="btn btn-primary btn-sm" onclick="savePhotoEditor(${idx})">Save</button>
-  `);
-
-  document.getElementById('view-area').innerHTML = `
-    <div class="photo-editor-wrap">
-      <div class="photo-editor-canvas" id="photo-canvas-wrap"
-           onmousemove="onPhotoMarkerMove(event)"
-           onmouseup="onPhotoMarkerUp(event)"
-           onmouseleave="onPhotoCanvasLeave(event)"
-           onwheel="onPhotoMouseWheel(event)"
-           ontouchstart="onPhotoCanvasTouchStart(event)"
-           ontouchmove="onPhotoCanvasTouchMove(event)"
-           ontouchend="onPhotoCanvasTouchEnd(event)">
-        <div id="photo-pan-layer">
-          <img id="photo-editor-img" src="${ph._editorSrc || ph.thumb || ''}" ondragstart="return false" style="${ph.rotation ? 'transform:rotate('+ph.rotation+'deg)' : ''}">
-          <div id="photo-markers-layer"></div>
-        </div>
-      </div>
-      <div class="photo-editor-sidebar">
-        <div>
-          <label style="font-size:10px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px">Caption</label>
-          <input class="form-control" id="photo-editor-caption" value="${esc(ph.caption||ph.name||'')}" placeholder="e.g. IDF Cabinet 1A" style="font-size:12px">
-          <div style="font-size:10px;color:var(--text3);margin-top:4px;font-family:var(--mono)">${ph.date?new Date(ph.date).toLocaleString():''}${ph.size?' · '+(ph.size/1024).toFixed(0)+' KB':''}</div>
-        </div>
-        <div style="font-size:10px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">
-          Device Tags
-          <span style="color:var(--text3);text-transform:none;letter-spacing:0;font-size:9px"> — drag ⊕ onto photo to pin</span>
-        </div>
-        ${slots}
-        ${!_photoLayoutLocked ? `<button onclick="addPhotoTag()" style="width:100%;margin-top:6px;background:rgba(0,200,122,.08);border:1px dashed rgba(0,200,122,.3);border-radius:6px;color:var(--accent);cursor:pointer;font-size:11px;font-family:var(--mono);padding:5px 8px;transition:all .15s" onmouseover="this.style.background='rgba(0,200,122,.15)'" onmouseout="this.style.background='rgba(0,200,122,.08)'">+ Add Tag</button>` : ''}
-        <div>
-          <div style="font-size:10px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Device Notes</div>
-          <div class="photo-notes-box" id="photo-notes-box"></div>
-        </div>
-      </div>
-    </div>`;
-
-  if (preservePanZoom) applyPhotoTransform();
-  const img = document.getElementById('photo-editor-img');
-  // Use rAF so markers are rendered after layout stabilizes (important on mobile when sidebar toggles)
-  const draw = () => requestAnimationFrame(() => renderPhotoOverlays(idx));
-  if (img.complete && img.naturalWidth) draw(); else img.onload = draw;
-
-  // Re-render markers whenever the canvas resizes (e.g. mobile nav sidebar opens/closes)
-  if (_photoResizeObs) _photoResizeObs.disconnect();
-  const canvasWrap = document.getElementById('photo-canvas-wrap');
-  if (canvasWrap) {
-    _photoResizeObs = new ResizeObserver(() => syncMarkersLayer());
-    _photoResizeObs.observe(canvasWrap);
-  }
-
-  ph.assignments.forEach((a, si) => {
-    const sel = document.getElementById(`slot-sel-${si}`);
-    if (sel && a?.itemId) sel.value = a.itemId;
-  });
-  refreshPhotoNotesBox(p, ph);
-}
-
-function getImgRect() {
-  const img = document.getElementById('photo-editor-img');
-  const wrap = document.getElementById('photo-canvas-wrap');
-  if (!img || !wrap) return null;
-  const wr = wrap.getBoundingClientRect();
-  const ir = img.getBoundingClientRect();
-  return { left: ir.left - wr.left, top: ir.top - wr.top, width: ir.width, height: ir.height };
-}
-
-function syncMarkersLayer() {
-  const img = document.getElementById('photo-editor-img');
-  const ml = document.getElementById('photo-markers-layer');
-  if (!img || !ml) return;
-  ml.style.left   = img.offsetLeft + 'px';
-  ml.style.top    = img.offsetTop  + 'px';
-  ml.style.width  = img.offsetWidth + 'px';
-  ml.style.height = img.offsetHeight + 'px';
-}
-
-function renderPhotoOverlays(idx) {
-  if (idx == null) idx = _photoEditIdx;
-  const p = getProject();
-  const ph = p.photos[idx];
-  if (!ph) return;
-  const ml = document.getElementById('photo-markers-layer');
-  const img = document.getElementById('photo-editor-img');
-  if (!ml || !img) return;
-  syncMarkersLayer();
-  ml.querySelectorAll('.photo-overlay-marker').forEach(el => el.remove());
-  if (!img.offsetWidth || !img.offsetHeight) return;
-
-  ph.assignments.forEach((a, si) => {
-    if (!a?.itemId || a.x == null) return;
-    const res = resolvePhotoItem(a.itemId, p);
-    if (!res) return;
-    const c = a.color || SLOT_COLORS[si % SLOT_COLORS.length];
-    const el = document.createElement('div');
-    el.className = 'photo-overlay-marker';
-    el.dataset.slotIdx = si;
-    // Percentage positioning — markers are stickers on the image, they scale with it
-    el.style.left = (a.x * 100) + '%';
-    el.style.top  = (a.y * 100) + '%';
-    const size = a.size || 1.0;
-    // Anchor at bottom-center (the dot) so the pin point stays fixed
-    el.style.transform = `translate(-50%, -100%) scale(${size})`;
-    if (_photoLayoutLocked) {
-      el.style.cursor = 'default';
-      el.style.opacity = '0.75';
-    }
-    el.innerHTML = `
-      <div class="photo-overlay-box" style="color:${c};border-color:${c};background:rgba(0,0,0,0.65)">${esc(res.label)}</div>
-      <div class="photo-overlay-dot" style="background:${c}"></div>`;
-    el.addEventListener('mousedown', e => {
-      e.preventDefault(); e.stopPropagation();
-      if (_photoLayoutLocked) {
-        const startX = e.clientX, startY = e.clientY;
-        const lp = setTimeout(() => {
-          if (Math.abs(e.clientX - startX) < 6 && Math.abs(e.clientY - startY) < 6) _photoTagLongPress(a.itemId);
-        }, 900);
-        document.addEventListener('mouseup', () => clearTimeout(lp), { once: true });
-        document.addEventListener('mousemove', () => clearTimeout(lp), { once: true });
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      _photoDrag = { slotIdx: si, offX: e.clientX - rect.left - rect.width/2, offY: e.clientY - rect.top - rect.height/2 };
-    });
-    el.addEventListener('touchstart', e => {
-      e.preventDefault(); e.stopPropagation();
-      const t = e.touches[0];
-      if (_photoLayoutLocked) {
-        const startX = t.clientX, startY = t.clientY;
-        const lp = setTimeout(() => {
-          const cur = el._lastTouch || t;
-          if (Math.abs(cur.clientX - startX) < 10 && Math.abs(cur.clientY - startY) < 10) _photoTagLongPress(a.itemId);
-        }, 900);
-        el.addEventListener('touchmove', mv => { el._lastTouch = mv.touches[0]; clearTimeout(lp); }, { once: true });
-        el.addEventListener('touchend', () => clearTimeout(lp), { once: true });
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      _photoDrag = { slotIdx: si, offX: t.clientX - rect.left - rect.width/2, offY: t.clientY - rect.top - rect.height/2 };
-    }, { passive: false });
-    ml.appendChild(el);
-  });
-}
-
-function _photoTagLongPress(itemId) {
-  if (!itemId) return;
-  const colonIdx = itemId.indexOf(':');
-  const kind = itemId.slice(0, colonIdx);
-  const id   = itemId.slice(colonIdx + 1);
-  if (kind === 'note') return;
-  if (kind === 'rack') {
-    sessionStorage.setItem('netrack_focus_rack', id);
-    setView('racks');
-    return;
-  }
-  if (kind === 'dev') {
-    const p = getProject();
-    const dev = p.devices.find(d => d.id === id);
-    if (!dev) return;
-    if ((dev.ports || 0) > 0 || dev.deviceType === 'Patch Panel') {
-      state.selectedSwitch = dev.id;
-      setView('ports');
-    } else {
-      sessionStorage.setItem('netrack_edit_device', dev.id);
-      setView('devices');
-    }
-  }
-}
-
-function onPhotoMarkerMove(e) {
-  if (!_photoDrag) return;
-  const ml = document.getElementById('photo-markers-layer');
-  if (!ml) return;
-  const r = ml.getBoundingClientRect();
-  if (!r.width || !r.height) return;
-  // Convert viewport coords to percentage within the markers layer (works at any zoom)
-  const pctX = ((e.clientX - _photoDrag.offX) - r.left) / r.width * 100;
-  const pctY = ((e.clientY - _photoDrag.offY) - r.top)  / r.height * 100;
-  const marker = ml.querySelector(`.photo-overlay-marker[data-slot-idx="${_photoDrag.slotIdx}"]`);
-  if (marker) { marker.style.left = pctX + '%'; marker.style.top = pctY + '%'; }
-}
-
-function onPhotoCanvasLeave(e) {
-  if (_photoDrag) onPhotoMarkerUp(e);
-}
-
-function onPhotoMarkerUp(e) {
-  if (!_photoDrag) return;
-  const slotIdx = _photoDrag.slotIdx;
-  const offX = _photoDrag.offX, offY = _photoDrag.offY;
-  _photoDrag = null;
-  const ml = document.getElementById('photo-markers-layer');
-  if (!ml) return;
-  const r = ml.getBoundingClientRect();
-  if (!r.width || !r.height) return;
-  let x = ((e.clientX - offX) - r.left) / r.width;
-  let y = ((e.clientY - offY) - r.top)  / r.height;
-  x = Math.max(0, Math.min(1, x));
-  y = Math.max(0, Math.min(1, y));
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (ph?.assignments?.[slotIdx]) {
-    ph.assignments[slotIdx].x = x;
-    ph.assignments[slotIdx].y = y;
-    const res = resolvePhotoItem(ph.assignments[slotIdx].itemId, p);
-    const photoName = ph.caption || ph.name || `Photo ${_photoEditIdx+1}`;
-    logChange(`Photo pin moved: "${res?.label || 'tag'}" repositioned on "${photoName}"`);
-    save();
-  }
-  renderPhotoOverlays(_photoEditIdx);
-}
-
-function openQuickRackModal(slotIdx) {
-  const existing = document.getElementById('quick-rack-modal');
-  if (existing) existing.remove();
-  const modal = document.createElement('div');
-  modal.id = 'quick-rack-modal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:16px';
-  modal.innerHTML = `
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;width:100%;max-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-      <div style="font-size:15px;font-weight:700;margin-bottom:14px;color:var(--text1)">Add Rack to Project</div>
-      <div class="form-row"><label>Rack Name <span style="color:var(--accent)">*</span></label>
-        <input class="form-control" id="qrm-name" placeholder="e.g. IDF Rack A" autofocus></div>
-      <div class="form-row"><label>Location</label>
-        <input class="form-control" id="qrm-location" placeholder="e.g. Server Room"></div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-secondary" onclick="document.getElementById('quick-rack-modal').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitQuickRack(${slotIdx})">Add &amp; Tag</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-  setTimeout(() => { const n = document.getElementById('qrm-name'); if (n) n.focus(); }, 50);
-}
-
-function submitQuickRack(slotIdx) {
-  const name = (document.getElementById('qrm-name')?.value || '').trim();
-  if (!name) { alert('Rack name is required.'); return; }
-  const location = (document.getElementById('qrm-location')?.value || '').trim();
-  const p = getProject();
-  if (!p.racks) p.racks = [];
-  const newRack = { id: genId(), name, location, notes: '', uHeight: 42 };
-  p.racks.push(newRack);
-  if (!p.photos[_photoEditIdx].assignments) p.photos[_photoEditIdx].assignments = [];
-  p.photos[_photoEditIdx].assignments[slotIdx] = Object.assign({}, p.photos[_photoEditIdx].assignments[slotIdx] || {}, { itemId: `rack:${newRack.id}`, x: null, y: null });
-  logChange(`Quick-added rack "${name}" and tagged on photo`);
   save();
-  document.getElementById('quick-rack-modal')?.remove();
-  openPhotoEditor(_photoEditIdx);
+  if (state.currentView === 'photos') renderPhotos();
+  toast('Moved to Trash — restore from ⋮ menu', 'success');
 }
-
-function openQuickDeviceModal(slotIdx) {
-  // Remove any existing modal
-  const existing = document.getElementById('quick-device-modal');
-  if (existing) existing.remove();
-  const TYPES = ['Switch','Router','Firewall','Modem','Server','NAS','AP','PC/Workstation','IP Phone','IP Camera','Access Control','APC/UPS','Misc Rack-Mounted','IoT Device','Printer','Fax Machine','Smartphone/Tablet','Misc.'];
-  const typeOpts = TYPES.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
-  const modal = document.createElement('div');
-  modal.id = 'quick-device-modal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:16px';
-  modal.innerHTML = `
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-      <div style="font-size:15px;font-weight:700;margin-bottom:14px;color:var(--text1)">Add Device to Project</div>
-      <div class="form-row"><label>Name <span style="color:var(--accent)">*</span></label>
-        <input class="form-control" id="qdm-name" placeholder="Device name" autofocus></div>
-      <div class="form-row"><label>Type</label>
-        <select class="form-control" id="qdm-type">${typeOpts}</select></div>
-      <div class="form-row"><label>IP Address</label>
-        <input class="form-control" id="qdm-ip" placeholder="192.168.1.x"></div>
-      <div class="form-row"><label>MAC Address</label>
-        <input class="form-control" id="qdm-mac" placeholder="AA:BB:CC:DD:EE:FF"></div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-secondary" onclick="document.getElementById('quick-device-modal').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitQuickDevice(${slotIdx})">Add &amp; Tag</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-  setTimeout(() => { const n = document.getElementById('qdm-name'); if (n) n.focus(); }, 50);
-}
-
-function submitQuickDevice(slotIdx) {
-  const name = (document.getElementById('qdm-name')?.value || '').trim();
-  if (!name) { alert('Device name is required.'); return; }
-  const type = document.getElementById('qdm-type')?.value || 'Misc.';
-  const ip  = (document.getElementById('qdm-ip')?.value || '').trim();
-  const mac = (document.getElementById('qdm-mac')?.value || '').trim();
-  const p = getProject();
-  const newDev = {
-    id: genId(), name, deviceType: type,
-    type: type === 'Switch' ? 'switching' : 'non-switching',
-    ip: ip||'', mac: mac||'', manufacturer: '', model: '', notes: '',
-    ports: 0, deviceUHeight: 1, rackId: null, rackU: null,
-    portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
-    webUser: '', webPassword: '', webProtocol: 'https', parentDeviceId: '',
-    addedDate: new Date().toISOString()
-  };
-  if (!p.devices) p.devices = [];
-  p.devices.push(newDev);
-  if (!p.photos[_photoEditIdx].assignments) p.photos[_photoEditIdx].assignments = [null,null,null,null];
-  p.photos[_photoEditIdx].assignments[slotIdx] = Object.assign({}, p.photos[_photoEditIdx].assignments[slotIdx] || {}, { itemId: `dev:${newDev.id}`, x: null, y: null });
-  logChange(`Quick-added device "${name}" and tagged on photo`);
-  save();
-  document.getElementById('quick-device-modal')?.remove();
-  openPhotoEditor(_photoEditIdx);
-}
-
-function openNoteTagPrompt(slotIdx) {
-  const existing = document.getElementById('note-tag-modal');
-  if (existing) existing.remove();
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  const currentNote = (ph?.assignments?.[slotIdx]?.itemId || '').startsWith('note:')
-    ? ph.assignments[slotIdx].itemId.slice(5) : '';
-  const modal = document.createElement('div');
-  modal.id = 'note-tag-modal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:16px';
-  modal.innerHTML = `
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-      <div style="font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text1)">Note Tag</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">This note is saved only on this photo, not as a device.</div>
-      <div class="form-row"><label>Note text</label>
-        <textarea class="form-control" id="ntm-text" rows="3" placeholder="e.g. Cable runs to server room" style="resize:vertical">${esc(currentNote)}</textarea></div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-        <button class="btn btn-secondary" onclick="document.getElementById('note-tag-modal').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="submitNoteTag(${slotIdx})">Save Note</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-  setTimeout(() => { const t = document.getElementById('ntm-text'); if (t) { t.focus(); t.select(); } }, 50);
-}
-
-function submitNoteTag(slotIdx) {
-  const text = (document.getElementById('ntm-text')?.value || '').trim();
-  if (!text) { alert('Note text is required.'); return; }
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph) return;
-  if (!ph.assignments) ph.assignments = [];
-  ph.assignments[slotIdx] = Object.assign({}, ph.assignments[slotIdx] || {}, { itemId: `note:${text}`, x: null, y: null });
-  logChange(`Note tag added to photo`);
-  save();
-  document.getElementById('note-tag-modal')?.remove();
-  openPhotoEditor(_photoEditIdx);
-}
-
-function onPhotoSlotChange(slotIdx, val) {
-  if (val === '__new_rack__') {
-    const sel = document.getElementById(`slot-sel-${slotIdx}`);
-    const p = getProject();
-    const ph = p.photos[_photoEditIdx];
-    if (sel) sel.value = ph?.assignments?.[slotIdx]?.itemId || '';
-    openQuickRackModal(slotIdx);
-    return;
-  }
-  if (val === '__new_device__') {
-    // Reset select back to previous value, then open quick-add modal
-    const sel = document.getElementById(`slot-sel-${slotIdx}`);
-    const p = getProject();
-    const ph = p.photos[_photoEditIdx];
-    if (sel) sel.value = ph?.assignments?.[slotIdx]?.itemId || '';
-    openQuickDeviceModal(slotIdx);
-    return;
-  }
-  if (val === '__note__') {
-    const sel = document.getElementById(`slot-sel-${slotIdx}`);
-    const p = getProject();
-    const ph = p.photos[_photoEditIdx];
-    if (sel) sel.value = ph?.assignments?.[slotIdx]?.itemId || '';
-    openNoteTagPrompt(slotIdx);
-    return;
-  }
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph) return;
-  if (!ph.assignments) ph.assignments = [];
-  const photoName = ph.caption || ph.name || `Photo ${_photoEditIdx+1}`;
-  if (val) {
-    if (!ph.assignments[slotIdx]) ph.assignments[slotIdx] = {};
-    ph.assignments[slotIdx].itemId = val;
-    const res = resolvePhotoItem(val, p);
-    logChange(`Photo tag assigned: "${res?.label || val}" → Tag ${slotIdx+1} on "${photoName}"`);
-    // Leave x/y as null — user drags to place on canvas
-  } else {
-    const old = ph.assignments[slotIdx];
-    if (old?.itemId) {
-      const res = resolvePhotoItem(old.itemId, p);
-      logChange(`Photo tag removed: "${res?.label || old.itemId}" from Tag ${slotIdx+1} on "${photoName}"`);
-    }
-    ph.assignments[slotIdx] = null;
-  }
-  save();
-  renderPhotoOverlays(_photoEditIdx);
-  refreshPhotoNotesBox(p, ph);
-  // Re-render just this slot header hint without full editor rebuild
-  openPhotoEditor(_photoEditIdx);
-}
-
-function refreshPhotoNotesBox(p, ph) {
-  const box = document.getElementById('photo-notes-box');
-  if (!box) return;
-  const assigned = (ph.assignments||[]).filter(a => a?.itemId);
-  if (!assigned.length) {
-    box.innerHTML = '<div style="font-size:11px;color:var(--text3)">No devices tagged yet.</div>';
-    return;
-  }
-  box.innerHTML = assigned.map(a => {
-    const si = ph.assignments.indexOf(a);
-    const c = SLOT_COLORS[si % SLOT_COLORS.length];
-    const res = resolvePhotoItem(a.itemId, p);
-    if (!res) return '';
-    const [kind, devId] = a.itemId.split(':');
-    const isDevice = kind === 'dev';
-    return `<div class="photo-notes-item">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
-        <div style="width:8px;height:8px;border-radius:50%;background:${c};flex-shrink:0;box-shadow:0 0 4px ${c}88"></div>
-        <span style="font-size:11px;font-weight:600;color:${c}">${esc(res.label)}</span>
-      </div>
-      <textarea class="form-control" rows="2" style="font-size:11px;resize:vertical;padding:5px 8px;line-height:1.45"
-        placeholder="Add notes about ${esc(res.label)}…"
-        ${isDevice ? `data-photo-note-devid="${devId}"` : ''}
-        onchange="savePhotoNoteInline(this,'${a.itemId}')"
-        oninput="autoResizeTA(this)"
-      >${esc(res.notes)}</textarea>
-    </div>`;
-  }).filter(Boolean).join('');
-}
-
-function savePhotoNoteInline(ta, itemRef) {
-  const p = getProject();
-  const [kind, id] = itemRef.split(':');
-  if (kind === 'dev') {
-    const dev = p.devices.find(d => d.id === id);
-    if (dev) { dev.notes = ta.value; logChange(`Device notes updated (via photo): ${dev.name}`); save(); }
-  } else if (kind === 'rack') {
-    const rack = (p.racks||[]).find(r => r.id === id);
-    if (rack) { rack.notes = ta.value; logChange(`Rack notes updated (via photo): ${rack.name}`); save(); }
-  }
-}
-
-function autoResizeTA(ta) {
-  ta.style.height = 'auto';
-  ta.style.height = ta.scrollHeight + 'px';
-}
-
-function setTagColor(slotIdx, color) {
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph?.assignments) return;
-  if (!ph.assignments[slotIdx]) ph.assignments[slotIdx] = {};
-  ph.assignments[slotIdx].color = color;
-  save();
-  openPhotoEditor(_photoEditIdx);
-}
-
-function setTagSize(slotIdx, val) {
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph?.assignments) return;
-  if (!ph.assignments[slotIdx]) ph.assignments[slotIdx] = {};
-  ph.assignments[slotIdx].size = parseFloat(val);
-  const lbl = document.getElementById(`size-label-${slotIdx}`);
-  if (lbl) lbl.textContent = Math.round(parseFloat(val) * 100) + '%';
-  save();
-  renderPhotoOverlays(_photoEditIdx);
-}
-
-function addPhotoTag() {
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph) return;
-  if (!ph.assignments) ph.assignments = [];
-  const usedColors = ph.assignments.map(a => a?.color).filter(Boolean);
-  const nextColor = SLOT_COLORS.find(c => !usedColors.includes(c)) || SLOT_COLORS[ph.assignments.length % SLOT_COLORS.length];
-  ph.assignments.push({ color: nextColor });
-  save();
-  openPhotoEditor(_photoEditIdx);
-}
-
-function removePhotoTag(slotIdx) {
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph?.assignments) return;
-  ph.assignments.splice(slotIdx, 1);
-  save();
-  openPhotoEditor(_photoEditIdx);
-}
-
-function removePhotoMarker(slotIdx) {
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  if (!ph?.assignments?.[slotIdx]) return;
-  const a = ph.assignments[slotIdx];
-  const res = a?.itemId ? resolvePhotoItem(a.itemId, p) : null;
-  const photoName = ph.caption || ph.name || `Photo ${_photoEditIdx+1}`;
-  logChange(`Photo pin removed: "${res?.label || 'tag'}" unpinned from "${photoName}"`);
-  ph.assignments[slotIdx].x = null;
-  ph.assignments[slotIdx].y = null;
-  save();
-  openPhotoEditor(_photoEditIdx);
-}
-
-// ── Sidebar drag → canvas drop ──
-let _sidebarDrag = null;
-let _photoPan    = { x: 0, y: 0 };
-let _photoZoom   = 1;
-let _photoPanDrag = null;
-let _photoPinch   = null;
-let _photoLastTap = 0;
-
-function applyPhotoTransform() {
-  const layer = document.getElementById('photo-pan-layer');
-  if (!layer) return;
-  layer.style.transform = `translate(${_photoPan.x}px,${_photoPan.y}px) scale(${_photoZoom})`;
-  // Markers are stickers — they live inside the pan-layer and transform with it automatically.
-  // No per-marker updates needed during zoom/pan.
-}
-
-function _photoDropOnCanvas(slotIdx, clientX, clientY) {
-  const wrap = document.getElementById('photo-canvas-wrap');
-  const ml = document.getElementById('photo-markers-layer');
-  if (!wrap || !ml) return;
-  const wr = wrap.getBoundingClientRect();
-  if (clientX < wr.left || clientX > wr.right || clientY < wr.top || clientY > wr.bottom) return;
-  const r = ml.getBoundingClientRect();
-  if (!r.width || !r.height) return;
-  const x = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
-  const y = Math.max(0, Math.min(1, (clientY - r.top)  / r.height));
-  const phNow = getProject()?.photos?.[_photoEditIdx];
-  if (phNow?.assignments?.[slotIdx]) {
-    phNow.assignments[slotIdx].x = x;
-    phNow.assignments[slotIdx].y = y;
-    const res = resolvePhotoItem(phNow.assignments[slotIdx].itemId, getProject());
-    logChange(`Photo pin placed: "${res?.label || 'tag'}" pinned on "${phNow.caption || phNow.name || `Photo ${_photoEditIdx+1}`}"`);
-    save();
-    openPhotoEditor(_photoEditIdx);
-  }
-}
-
-function startSidebarDrag(e, slotIdx) {
-  e.preventDefault();
-  if (_photoLayoutLocked) { toast('Layout is locked — unlock to reposition tags', 'warning'); return; }
-  const p = getProject();
-  const ph = p.photos[_photoEditIdx];
-  const a = ph?.assignments?.[slotIdx];
-  if (!a?.itemId) return;
-  const res = resolvePhotoItem(a.itemId, p);
-  if (!res) return;
-  const ph2 = getProject()?.photos?.[_photoEditIdx];
-  const c = ph2?.assignments?.[slotIdx]?.color || SLOT_COLORS[slotIdx % SLOT_COLORS.length];
-  const isTouch = e.type === 'touchstart';
-  const startX = isTouch ? e.touches[0].clientX : e.clientX;
-  const startY = isTouch ? e.touches[0].clientY : e.clientY;
-
-  const ghost = document.createElement('div');
-  ghost.className = 'photo-overlay-marker';
-  ghost.style.cssText = `position:fixed;z-index:9998;pointer-events:none;transform:translate(-50%,-100%);transform-origin:center bottom;left:${startX}px;top:${startY}px;opacity:0.85`;
-  ghost.innerHTML = `<div class="photo-overlay-box" style="color:${c};border-color:${c};background:rgba(0,0,0,0.75)">${esc(res.label)}</div><div class="photo-overlay-dot" style="background:${c}"></div>`;
-  document.body.appendChild(ghost);
-  _sidebarDrag = { slotIdx, ghost };
-
-  const getXY = ev => isTouch
-    ? { x: (ev.touches[0] || ev.changedTouches[0]).clientX, y: (ev.touches[0] || ev.changedTouches[0]).clientY }
-    : { x: ev.clientX, y: ev.clientY };
-
-  const onMove = ev => {
-    if (isTouch) ev.preventDefault();
-    const { x, y } = getXY(ev);
-    ghost.style.left = x + 'px'; ghost.style.top = y + 'px';
-    const canvas = document.getElementById('photo-canvas-wrap');
-    if (canvas) {
-      const cr = canvas.getBoundingClientRect();
-      canvas.style.outline = (x >= cr.left && x <= cr.right && y >= cr.top && y <= cr.bottom)
-        ? '2px solid var(--accent)' : '';
-    }
-  };
-  const onUp = ev => {
-    if (isTouch) ev.preventDefault();
-    document.removeEventListener(isTouch ? 'touchmove' : 'mousemove', onMove);
-    document.removeEventListener(isTouch ? 'touchend'  : 'mouseup',   onUp);
-    ghost.remove();
-    const canvas = document.getElementById('photo-canvas-wrap');
-    if (canvas) canvas.style.outline = '';
-    const sd = _sidebarDrag; _sidebarDrag = null;
-    if (!sd) return;
-    const { x, y } = getXY(ev);
-    _photoDropOnCanvas(sd.slotIdx, x, y);
-  };
-  document.addEventListener(isTouch ? 'touchmove' : 'mousemove', onMove, { passive: false });
-  document.addEventListener(isTouch ? 'touchend'  : 'mouseup',   onUp,   { passive: false });
-}
-
-function onPhotoCanvasTouchStart(e) {
-  // Double-tap to reset pan/zoom
-  const now = Date.now();
-  if (e.touches.length === 1 && now - _photoLastTap < 300) {
-    _photoPan = { x: 0, y: 0 }; _photoZoom = 1;
-    applyPhotoTransform(); _photoLastTap = 0; return;
-  }
-  _photoLastTap = e.touches.length === 1 ? now : 0;
-
-  if (e.touches.length === 1) {
-    const t = e.touches[0];
-    if (document.elementFromPoint(t.clientX, t.clientY)?.closest?.('.photo-overlay-marker') || _photoDrag) return;
-    e.preventDefault();
-    _photoPanDrag = { startX: t.clientX, startY: t.clientY, origX: _photoPan.x, origY: _photoPan.y };
-    _photoPinch = null;
-  } else if (e.touches.length === 2) {
-    e.preventDefault();
-    _photoPanDrag = null;
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const wrap2 = document.getElementById('photo-canvas-wrap');
-    const wr2 = wrap2 ? wrap2.getBoundingClientRect() : { left: 0, top: 0 };
-    const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - wr2.left;
-    const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - wr2.top;
-    _photoPinch = { startDist: Math.hypot(dx, dy), startZoom: _photoZoom, startPanX: _photoPan.x, startPanY: _photoPan.y, midX, midY };
-  }
-}
-
-function onPhotoCanvasTouchMove(e) {
-  e.preventDefault();
-  if (_photoDrag && e.touches.length >= 1) {
-    const t = e.touches[0];
-    onPhotoMarkerMove({ clientX: t.clientX, clientY: t.clientY });
-    return;
-  }
-  if (_sidebarDrag) return;
-  if (e.touches.length === 1 && _photoPanDrag) {
-    const t = e.touches[0];
-    _photoPan.x = _photoPanDrag.origX + (t.clientX - _photoPanDrag.startX);
-    _photoPan.y = _photoPanDrag.origY + (t.clientY - _photoPanDrag.startY);
-    applyPhotoTransform();
-  } else if (e.touches.length === 2 && _photoPinch) {
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const newZoom = Math.max(0.5, Math.min(5, _photoPinch.startZoom * Math.hypot(dx, dy) / _photoPinch.startDist));
-    // Adjust pan so the pinch center stays at the same position on screen
-    const wrapEl = document.getElementById('photo-canvas-wrap');
-    if (wrapEl) {
-      const hw = wrapEl.offsetWidth / 2, hh = wrapEl.offsetHeight / 2;
-      const { midX, midY, startZoom, startPanX, startPanY } = _photoPinch;
-      // Local pan-layer point under pinch center (at start of pinch)
-      const lx0 = (midX - hw - startPanX) / startZoom;
-      const ly0 = (midY - hh - startPanY) / startZoom;
-      _photoPan.x = midX - hw - lx0 * newZoom;
-      _photoPan.y = midY - hh - ly0 * newZoom;
-    }
-    _photoZoom = newZoom;
-    applyPhotoTransform();
-  }
-}
-
-function onPhotoCanvasTouchEnd(e) {
-  if (_photoDrag && e.touches.length === 0) {
-    const t = e.changedTouches[0];
-    onPhotoMarkerUp({ clientX: t.clientX, clientY: t.clientY });
-  }
-  if (e.touches.length < 2) _photoPinch = null;
-  if (e.touches.length === 0) _photoPanDrag = null;
-}
-
-function savePhotoEditor(idx) {
-  const p = getProject();
-  const ph = p.photos[idx];
-  if (!ph) return;
-  const cap = document.getElementById('photo-editor-caption')?.value?.trim() || '';
-  if (cap !== (ph.caption || '')) {
-    logChange(`Photo caption updated: "${ph.caption || ph.name || `Photo ${idx+1}`}" → "${cap}"`);
-  }
-  ph.caption = cap;
-  save();
-  toast('Photo saved', 'success');
-  // Refresh topbar to reflect updated state
-  openPhotoEditor(idx);
-}
-
-function _photoEditorMoreMenu(idx) {
-  return `
-    <div class="topbar-overflow-item" onclick="rotatePhoto(${idx});document.getElementById('topbar-more-menu')?.remove()">↻ Rotate</div>
-    <label class="topbar-overflow-item" style="cursor:pointer;display:block">
-      🔄 Replace Photo
-      <input type="file" accept="image/*" style="display:none" onchange="replacePhoto(event,${idx});document.getElementById('topbar-more-menu')?.remove()">
-    </label>
-    <div class="topbar-overflow-item" onclick="movePhotoToFolder(${idx});document.getElementById('topbar-more-menu')?.remove()">📁 Move to Folder</div>
-    <div style="border-top:1px solid var(--border);margin:4px 0"></div>
-    <div class="topbar-overflow-item" style="color:var(--red)" onclick="deletePhoto(${idx});renderPhotos();document.getElementById('topbar-more-menu')?.remove()">✕ Delete Photo</div>
-  `;
-}
-
-function togglePhotoLock() {
-  _photoLayoutLocked = !_photoLayoutLocked;
-  openPhotoEditor(_photoEditIdx, true);
-  toast(_photoLayoutLocked ? 'Layout locked' : 'Layout unlocked — drag tags to reposition', _photoLayoutLocked ? 'warning' : 'success');
-}
-
-
-async function replacePhoto(e, idx) {
-  const file = e.target.files[0];
-  if (!file) return;
-  e.target.value = '';
-  try {
-    const blob = await _convertHeicIfNeeded(file, file.name);
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    const p = getProject();
-    if (!p.photos[idx]) return;
-    const oldName = p.photos[idx].caption || p.photos[idx].name || `Photo ${idx+1}`;
-    await _idbSavePhotoData(p.photos[idx].id, dataUrl);
-    p.photos[idx].data = null;
-    p.photos[idx].dataLen = dataUrl.length;
-    p.photos[idx].thumb = await _generateThumb(dataUrl) || '';
-    p.photos[idx].name = file.name;
-    p.photos[idx].size = file.size;
-    logChange(`Photo replaced: "${oldName}" → "${file.name}" (${(file.size/1024).toFixed(0)} KB)`);
-    save();
-    openPhotoEditor(idx);
-    toast('Photo replaced', 'success');
-  } catch (err) {
-    console.error('Replace photo error:', err);
-    toast('Failed to replace photo: ' + err.message, 'error');
-  }
-}
-
-function rotatePhoto(idx) {
-  const p = getProject();
-  const ph = p.photos[idx];
-  if (!ph) return;
-  ph.rotation = ((ph.rotation || 0) + 90) % 360;
-  save();
-  openPhotoEditor(idx, true);
-  toast('Photo rotated', 'success');
-}
-
-function onPhotoMouseWheel(e) {
-  e.preventDefault();
-  const wrap = document.getElementById('photo-canvas-wrap');
-  if (!wrap) return;
-  const wr = wrap.getBoundingClientRect();
-  const mouseX = e.clientX - wr.left;
-  const mouseY = e.clientY - wr.top;
-  const hw = wrap.offsetWidth / 2, hh = wrap.offsetHeight / 2;
-
-  // Calculate zoom based on scroll direction
-  const delta = e.deltaY > 0 ? 0.9 : 1.1;
-  const newZoom = Math.max(0.5, Math.min(5, _photoZoom * delta));
-
-  // Zoom toward mouse position
-  const lx = (mouseX - hw - _photoPan.x) / _photoZoom;
-  const ly = (mouseY - hh - _photoPan.y) / _photoZoom;
-  _photoPan.x = mouseX - hw - lx * newZoom;
-  _photoPan.y = mouseY - hh - ly * newZoom;
-  _photoZoom = newZoom;
-  applyPhotoTransform();
-}
-
-// legacy - keep for any stale refs
-function openPhotoLightbox(idx) { openPhotoEditor(idx); }
-function savePhotoCaption(idx) { savePhotoEditor(idx); }
 
 // ═══════════════════════════════════════════
-//  ZIP DOWNLOAD / UPLOAD
+//  HELPERS + DOWNLOADS
 // ═══════════════════════════════════════════
-
+let _heicLoading = null;
 async function _convertHeicIfNeeded(blob, fileName) {
   const name = (fileName || blob.name || '').toLowerCase();
   const isHeic = name.endsWith('.heic') || name.endsWith('.heif') || blob.type === 'image/heic' || blob.type === 'image/heif';
-  if (!isHeic || typeof heic2any === 'undefined') return blob;
+  if (!isHeic) return blob;
+  if (typeof heic2any === 'undefined') {
+    // Lazy-load the converter from CDN on first HEIC upload
+    if (!_heicLoading) {
+      _heicLoading = new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = 'https://unpkg.com/heic2any@0.0.4/dist/heic2any.min.js';
+        s.onload = resolve;
+        s.onerror = resolve;
+        document.head.appendChild(s);
+      });
+    }
+    await _heicLoading;
+    if (typeof heic2any === 'undefined') return blob;
+  }
   try {
-    const converted = await heic2any({ blob, toType: 'image/jpeg', quality: 0.92 });
+    const converted = await heic2any({ blob, toType: 'image/jpeg', quality: 0.97 });
     return Array.isArray(converted) ? converted[0] : converted;
   } catch (err) {
     console.warn('HEIC conversion failed, using original:', err);
@@ -1470,10 +1072,6 @@ function _mimeToExt(mime) {
   return map[mime] || '.jpg';
 }
 
-// ═══════════════════════════════════════════
-//  PHOTO DOWNLOAD — Original + Labeled
-// ═══════════════════════════════════════════
-
 async function downloadOriginalPhoto(idx) {
   const p = getProject();
   const ph = p.photos[idx];
@@ -1485,98 +1083,7 @@ async function downloadOriginalPhoto(idx) {
   let name = (ph.caption || ph.name || 'photo').replace(/[<>:"/\\|?*]/g, '_');
   if (!/\.\w+$/.test(name)) name += ext;
   _triggerPhotoDownload(data, name);
-  toast('Original photo downloaded', 'success');
-}
-
-async function downloadLabeledPhoto(idx) {
-  const p = getProject();
-  const ph = p.photos[idx];
-  if (!ph) return;
-  const data = await _lazyGetPhotoData(ph.id);
-  if (!data) return toast('Photo data not found', 'error');
-
-  const img = new Image();
-  img.onload = () => {
-    // Apply rotation if any
-    const rot = (ph.rotation || 0) % 360;
-    const swap = (rot === 90 || rot === 270);
-    const cw = swap ? img.height : img.width;
-    const ch = swap ? img.width  : img.height;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = cw;
-    canvas.height = ch;
-    const ctx = canvas.getContext('2d');
-
-    // Draw rotated image
-    ctx.save();
-    ctx.translate(cw / 2, ch / 2);
-    ctx.rotate(rot * Math.PI / 180);
-    ctx.drawImage(img, -img.width / 2, -img.height / 2);
-    ctx.restore();
-
-    // Draw labels
-    const assignments = (ph.assignments || []).filter(a => a?.itemId && a.x != null);
-    assignments.forEach((a, si) => {
-      const res = resolvePhotoItem(a.itemId, p);
-      if (!res) return;
-      const c = a.color || SLOT_COLORS[si % SLOT_COLORS.length];
-      const x = a.x * cw;
-      const y = a.y * ch;
-      const size = a.size || 1.0;
-      const fontSize = Math.round(14 * size * Math.max(1, cw / 800));
-      const padding = Math.round(6 * size * Math.max(1, cw / 800));
-      const dotR = Math.round(5 * size * Math.max(1, cw / 800));
-
-      ctx.font = `bold ${fontSize}px 'Segoe UI', sans-serif`;
-      const textW = ctx.measureText(res.label).width;
-      const boxW = textW + padding * 2;
-      const boxH = fontSize + padding * 2;
-
-      // Box (above the pin point)
-      const boxX = x - boxW / 2;
-      const boxY = y - boxH - dotR - 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
-      ctx.strokeStyle = c;
-      ctx.lineWidth = Math.max(1.5, 2 * size * Math.max(1, cw / 1200));
-      const r = Math.round(4 * size);
-      ctx.beginPath();
-      if (ctx.roundRect) {
-        ctx.roundRect(boxX, boxY, boxW, boxH, r);
-      } else {
-        ctx.rect(boxX, boxY, boxW, boxH);
-      }
-      ctx.fill();
-      ctx.stroke();
-
-      // Text
-      ctx.fillStyle = c;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(res.label, x, boxY + boxH / 2);
-
-      // Dot (pin point)
-      ctx.beginPath();
-      ctx.arc(x, y, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = c;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    });
-
-    // Download
-    let name = (ph.caption || ph.name || 'photo').replace(/[<>:"/\\|?*]/g, '_') + '_labeled';
-    if (!/\.\w+$/.test(name)) name += '.jpg';
-    canvas.toBlob(blob => {
-      if (!blob) { toast('Could not render labeled photo', 'error'); return; }
-      const url = URL.createObjectURL(blob);
-      _triggerPhotoDownload(url, name, true);
-      toast('Labeled photo downloaded', 'success');
-    }, 'image/jpeg', 0.92);
-  };
-  img.onerror = () => toast('Could not load photo for labeling', 'error');
-  img.src = data;
+  toast('Photo downloaded', 'success');
 }
 
 function _triggerPhotoDownload(urlOrData, filename, isObjectUrl) {
@@ -1593,7 +1100,7 @@ function _triggerPhotoDownload(urlOrData, filename, isObjectUrl) {
 async function downloadPhotosAsZip() {
   const p = getProject();
   if (!p.photos || p.photos.length === 0) return toast('No photos to download', 'error');
-  if (typeof JSZip === 'undefined') return toast('ZIP library not loaded — please reload the page', 'error');
+  await _ensureJSZip();
 
   toast('Building ZIP file...', 'info');
   const zip = new JSZip();
@@ -1605,14 +1112,11 @@ async function downloadPhotosAsZip() {
     if (!data) continue;
 
     const folderPath = _getPhotoFolderPath(p.photoFolders || [], ph.folderId);
-
-    // Determine filename with correct extension
     let baseName = (ph.name || ph.caption || ph.id).replace(/[<>:"/\\|?*]/g, '_');
     const mime = (data.match(/^data:([^;]+);/) || [])[1] || 'image/jpeg';
     const ext = _mimeToExt(mime);
     if (!/\.\w+$/.test(baseName)) baseName += ext;
 
-    // Ensure unique path within the ZIP
     let fullPath = folderPath ? folderPath + '/' + baseName : baseName;
     let counter = 1;
     while (usedPaths.has(fullPath.toLowerCase())) {
@@ -1645,99 +1149,5 @@ async function downloadPhotosAsZip() {
   } catch (err) {
     console.error('ZIP generation error:', err);
     toast('Failed to generate ZIP: ' + err.message, 'error');
-  }
-}
-
-async function uploadPhotosFromZip(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  e.target.value = '';
-  if (typeof JSZip === 'undefined') return toast('ZIP library not loaded — please reload the page', 'error');
-
-  toast('Reading ZIP file...', 'info');
-  try {
-    const zip = await JSZip.loadAsync(file);
-    const p = getProject();
-    if (!p.photos) p.photos = [];
-    if (!p.photoFolders) p.photoFolders = [];
-
-    let added = 0;
-    const folderCache = new Map(); // "path/to/folder" -> folderId
-
-    // Pre-index existing folders by building their full paths
-    for (const f of p.photoFolders) {
-      const path = _getPhotoFolderPath(p.photoFolders, f.id);
-      folderCache.set(path.toLowerCase(), f.id);
-    }
-
-    const entries = Object.values(zip.files).filter(entry =>
-      !entry.dir && /\.(jpg|jpeg|png|gif|bmp|webp|svg|heic|heif|tiff|tif|avif|ico|raw|cr2|nef|arw|dng)$/i.test(entry.name)
-    );
-
-    for (const entry of entries) {
-      const parts = entry.name.replace(/\\/g, '/').split('/');
-      const fileName = parts.pop();
-      if (!fileName) continue;
-
-      // Create/find folders for this path
-      let parentId = '';
-      let folderPath = '';
-      for (const folderName of parts) {
-        folderPath = folderPath ? folderPath + '/' + folderName : folderName;
-        const key = folderPath.toLowerCase();
-        if (!folderCache.has(key)) {
-          // Check if a folder with this name already exists under this parent
-          let existing = p.photoFolders.find(f => f.name === folderName && (f.parentId || '') === parentId);
-          if (!existing) {
-            existing = { id: genId(), name: folderName, location: '', folderName: folderName, parentId };
-            p.photoFolders.push(existing);
-          }
-          folderCache.set(key, existing.id);
-        }
-        parentId = folderCache.get(key);
-      }
-
-      // Read file as data URL, converting HEIC if needed
-      let blob = await entry.async('blob');
-      blob = await _convertHeicIfNeeded(blob, entry.name);
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-
-      const thumb = await _generateThumb(dataUrl);
-      const photoId = genId();
-      await _idbSavePhotoData(photoId, dataUrl);
-
-      p.photos.push({
-        id: photoId,
-        name: fileName,
-        caption: '',
-        data: null,
-        thumb: thumb || '',
-        ts: new Date().toISOString(),
-        date: Date.now(),
-        size: blob.size,
-        dataLen: dataUrl.length,
-        assignments: [],
-        folderId: parentId
-      });
-      added++;
-    }
-
-    if (added > 0) {
-      logChange(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`);
-      save();
-      if (typeof _gdriveQueuePhotoSync === 'function') _gdriveQueuePhotoSync();
-      renderPhotos();
-      toast(`Imported ${added} photo${added > 1 ? 's' : ''} from ZIP`, 'success');
-    } else {
-      toast('No image files found in ZIP', 'error');
-    }
-  } catch (err) {
-    console.error('ZIP upload error:', err);
-    toast('Failed to read ZIP: ' + err.message, 'error');
   }
 }
