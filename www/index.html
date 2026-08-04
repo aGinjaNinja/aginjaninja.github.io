@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Van Nice Site Manager</title>
+<link rel="icon" type="image/png" sizes="192x192" href="img/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="img/icon-512.png">
+<link rel="apple-touch-icon" href="img/icon-192.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0f16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ════════════════ PROJECT PICKER ════════════════ -->
+<div id="screen-projects" class="screen" style="display:none">
+  <div style="width:100%;display:flex;flex-direction:column;align-items:center">
+    <div class="proj-header">
+      <img src="" id="proj-logo-img" style="width:110px;height:110px;border-radius:50%;object-fit:cover;box-shadow:0 0 36px #c8a84055;margin-bottom:14px" alt="VNG Logo">
+      <h1><span>Site Manager</span></h1>
+      <p>Van Nice Guys, LLC · Network documentation, rack layout &amp; port assignment</p>
+    </div>
+    <div class="proj-grid" id="proj-grid"></div>
+    <div class="proj-actions">
+      <button class="btn btn-ghost btn-sm" onclick="importData()">⇩ Import File</button>
+      <button class="btn btn-ghost btn-sm" onclick="gdriveLoad()" style="color:#4285f4;border-color:rgba(66,133,244,.4)">☁ Load Drive</button>
+      <button class="btn btn-ghost btn-sm" onclick="gdriveSaveAll()" style="color:#4285f4;border-color:rgba(66,133,244,.4)">☁ Save All</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBackupSettings()">⚙ Backup</button>
+      <button class="btn btn-ghost btn-sm" id="proj-trash-btn" onclick="openProjectTrashSheet()" style="display:none">🗑 Trash</button>
+    </div>
+    <div id="proj-backup-status" style="margin-top:12px;text-align:center;font-size:11px;color:var(--text3);font-family:var(--mono)"></div>
+  </div>
+</div>
+
+<!-- ════════════════ APP ════════════════ -->
+<div id="screen-app" class="screen" style="display:none">
+  <div class="app-main">
+    <div class="topbar">
+      <h2 id="view-title">Home</h2>
+      <div id="topbar-actions"></div>
+      <button class="icon-btn" onclick="openSearch()" title="Search">⌕</button>
+      <button class="icon-btn" onclick="openAppMenu()" title="Menu">⋮</button>
+    </div>
+    <div class="view-area" id="view-area"></div>
+  </div>
+  <div id="fab-container"></div>
+  <div id="pool-dock" class="pool-dock" style="display:none"></div>
+  <nav class="bottom-nav" id="bottom-nav"></nav>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+<div id="toast"></div>
+
+<!-- Hidden file inputs -->
+<input type="file" id="import-input" accept=".json,.zip" style="display:none" onchange="handleImport(event)">
+<input type="file" id="photo-upload" accept="image/*,.heic,.heif" multiple style="display:none">
+<input type="file" id="photo-capture" accept="image/*,.heic,.heif" capture="environment" style="display:none">
+<input type="file" id="csv-input" accept=".csv,.txt" style="display:none" onchange="handleCSVImport(event)">
+<input type="file" id="angry-ip-input" accept=".csv,.txt" style="display:none" onchange="handleAngryIPImport(event)">
+<input type="file" id="sitemap-upload" accept="image/*" style="display:none">
+
+<!-- Application JS (external libraries are lazy-loaded on demand) -->
+<script src="js/core.js"></script>
+<script src="js/gdrive.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/rackports.js"></script>
+<script src="js/photos.js"></script>
+<script src="js/sitemap.js"></script>
+<script src="js/search.js"></script>
+<script src="js/report.js"></script>
+<script>initApp();</script>
+</body>
+</html>
