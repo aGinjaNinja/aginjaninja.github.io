@@ -977,7 +977,6 @@ function assignPort(switchId, portNum) {
     ? (PORT_CAPABLE.has(d.deviceType||'') && !PANEL_LIKE(d.deviceType||''))
     : PANEL_LIKE(d.deviceType||'')));
   const patchIds = new Set(patchCands.map(d => d.id));
-  const others = p.devices.filter(d => d.id !== switchId && !patchIds.has(d.id));
 
   // A mirrored link to a patch partner fills the patch section; the device
   // riding that circuit (or a plain assignment) fills the device picker.
@@ -990,18 +989,8 @@ function assignPort(switchId, portNum) {
   const patchDevOpts = `<option value="">— Not patched —</option>` +
     patchCands.map(d => `<option value="${d.id}" ${currPatchDev?.id === d.id ? 'selected' : ''}>${esc(d.name)} (${Object.keys(d.portAssignments||{}).length}/${d.ports||0})</option>`).join('');
 
-  const genericOpts = (() => {
-    const byType = {};
-    others.forEach(d => { const t = d.deviceType || 'Misc.'; if (!byType[t]) byType[t] = []; byType[t].push(d); });
-    const typeOrder = ['Switch','Router','Firewall','Modem','Server','NAS','AP','PC/Workstation','IP Phone','IP Camera','Access Control','APC/UPS','Patch Panel','Misc Rack-Mounted','IoT Device','Printer','Fax Machine','Smartphone/Tablet','Misc.','Other'];
-    const sorted = [...typeOrder.filter(t => byType[t]), ...Object.keys(byType).filter(t => !typeOrder.includes(t))];
-    return sorted.map(type => {
-      const devs = byType[type].sort((a,b) => (a.name||'').localeCompare(b.name||''));
-      return `<optgroup label="${esc(type)}">` +
-        devs.map(d => `<option value="${d.id}" ${d.id === pickSelId ? 'selected' : ''}>${esc(d.name)}${d.ip?' · '+esc(d.ip):''}</option>`).join('') +
-        `</optgroup>`;
-    }).join('');
-  })();
+  const genericOpts = _portDevOptions(sw, p, pickSelId, '', portNum);
+  _portEditCtx = { switchId, portNum };
 
   const [curFa, curFb] = currFiber.split('/');
   const fiberOpts = sel => `<option value="">—</option>` +
@@ -1044,6 +1033,7 @@ function assignPort(switchId, portNum) {
     </div>
 
     <div class="form-row"><label>Connected Device <span style="color:var(--text3)">(${isPanel ? 'camera / wall gear on this line' : 'attached, or riding the patched line'})</span></label>
+      <input class="form-control" id="port-dev-search" placeholder="⌕ Filter — name, IP, MAC, type…" autocomplete="off" oninput="_portDevFilterInput()" style="margin-bottom:7px">
       <select class="form-control" id="port-device" onchange="onPortDeviceChange(this,'${switchId}',${portNum})">
         <option value="">— Empty / Unassign —</option>
         <option value="__new__" style="color:var(--accent);font-weight:700">＋ New Device…</option>
@@ -1069,6 +1059,85 @@ function assignPort(switchId, portNum) {
   // Populate the patch-port list (and peer section) for the current state
   onPatchDevChange(switchId, portNum, currPatchDev ? circ.link.port : '');
   if (currGenericDev) onPortDeviceChange(document.getElementById('port-device'), switchId, portNum, currPeerPort);
+}
+
+// ── Connected Device picker: grouped options + free-text filter ──
+// Matches name, IP, MAC (with or without separators), manufacturer, model,
+// device type and notes; multiple words AND together. The current pick is
+// always kept in the list so filtering can't silently unassign it.
+let _portEditCtx = null;
+
+function _portDevOptions(sw, p, selectedId, query, portNum) {
+  const isPanel = PANEL_LIKE(sw.deviceType || '');
+  const patchCands = p.devices.filter(d => d.id !== sw.id && (d.ports||0) > 0 && (isPanel
+    ? (PORT_CAPABLE.has(d.deviceType||'') && !PANEL_LIKE(d.deviceType||''))
+    : PANEL_LIKE(d.deviceType||'')));
+  const patchIds = new Set(patchCands.map(d => d.id));
+  let others = p.devices.filter(d => d.id !== sw.id && !patchIds.has(d.id));
+  // Which devices already sit on a port somewhere (and where) — the port
+  // being edited right now doesn't count as "taken"
+  const assignedOn = {};
+  p.devices.forEach(dd => {
+    const note = (pid, tid) => {
+      if (!tid || assignedOn[tid]) return;
+      if (dd.id === sw.id && +pid === +portNum) return;
+      assignedOn[tid] = `${dd.name} P${pid}`;
+    };
+    Object.entries(dd.portAssignments || {}).forEach(([pid, tid]) => note(pid, tid));
+    Object.entries(dd.portEndDevice || {}).forEach(([pid, tid]) => note(pid, tid));
+  });
+  const q = String(query || '').trim().toLowerCase();
+  if (q) {
+    const macKey = s => String(s || '').toLowerCase().replace(/[^a-f0-9]/g, '');
+    const toks = q.split(/\s+/);
+    others = others.filter(d => {
+      const hay = [d.name, d.ip, d.mac, d.manufacturer, d.model, d.deviceType, d.notes]
+        .filter(Boolean).join(' ').toLowerCase();
+      const macH = macKey(d.mac);
+      return toks.every(t => {
+        if (hay.includes(t)) return true;
+        // MAC fragment without separators ("1122" finds 11:22)
+        const tMac = t.replace(/[:\-\.]/g, '');
+        return !!macH && /^[0-9a-f]+$/.test(tMac) &&
+          (t.includes(':') || t.includes('-') || tMac.length >= 4) && macH.includes(tMac);
+      });
+    });
+    if (selectedId && !others.some(d => d.id === selectedId)) {
+      const cur = p.devices.find(d => d.id === selectedId);
+      if (cur) others.unshift(cur);
+    }
+  }
+  const byType = {};
+  others.forEach(d => { const t = d.deviceType || 'Misc.'; if (!byType[t]) byType[t] = []; byType[t].push(d); });
+  const typeOrder = ['Switch','Router','Firewall','Modem','Server','NAS','AP','PC/Workstation','IP Phone','IP Camera','Access Control','APC/UPS','Patch Panel','Misc Rack-Mounted','IoT Device','Printer','Fax Machine','Smartphone/Tablet','Misc.','Other'];
+  const sorted = [...typeOrder.filter(t => byType[t]), ...Object.keys(byType).filter(t => !typeOrder.includes(t))];
+  return sorted.map(type => {
+    // Free devices first within each group, then the already-connected ones
+    const devs = byType[type].sort((a,b) =>
+      (assignedOn[a.id] ? 1 : 0) - (assignedOn[b.id] ? 1 : 0) ||
+      (a.name||'').localeCompare(b.name||''));
+    return `<optgroup label="${esc(type)}">` +
+      devs.map(d => {
+        const asg = assignedOn[d.id];
+        return `<option value="${d.id}" ${d.id === selectedId ? 'selected' : ''}${asg ? ' style="color:var(--text3)"' : ''}>${asg ? '⇌ ' : ''}${esc(d.name)}${d.ip?' · '+esc(d.ip):''}${asg ? ' — on ' + esc(asg) : ''}</option>`;
+      }).join('') +
+      `</optgroup>`;
+  }).join('');
+}
+
+function _portDevFilterInput() {
+  if (!_portEditCtx) return;
+  const p = getProject();
+  const sw = p.devices.find(d => d.id === _portEditCtx.switchId);
+  const sel = document.getElementById('port-device');
+  if (!sw || !sel) return;
+  const q = document.getElementById('port-dev-search')?.value || '';
+  const keep = sel.value;
+  sel.innerHTML = `<option value="">— Empty / Unassign —</option>
+    <option value="__new__" style="color:var(--accent);font-weight:700">＋ New Device…</option>` +
+    _portDevOptions(sw, p, keep && keep !== '__new__' ? keep : '', q, _portEditCtx.portNum);
+  sel.value = keep;
+  if (sel.value !== keep) sel.value = '';
 }
 
 // Fill the "their port" dropdown for the chosen patch partner, showing

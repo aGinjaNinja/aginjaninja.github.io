@@ -969,14 +969,25 @@ function closeModal() {
   const box = document.getElementById('modal-content');
   if (!overlay || !box) return;
 
-  // Tap outside the sheet closes it (saving first if a dismiss hook is set)
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) _dismissModal(); });
+  // Tap outside the sheet closes it (saving first if a dismiss hook is set) —
+  // but only when the press STARTED on the scrim too. A text-selection drag
+  // that begins inside the sheet and releases outside (common with a mouse on
+  // PC) resolves its click to the scrim and must NOT close the sheet.
+  let scrimPress = false;
+  overlay.addEventListener('pointerdown', (e) => { scrimPress = e.target === overlay; });
+  overlay.addEventListener('pointerup', (e) => {
+    const started = scrimPress;
+    scrimPress = false;
+    if (started && e.target === overlay) _dismissModal();
+  });
 
   // Drag the sheet down to dismiss (from the grip, or from the body when scrolled to top)
   let drag = null;
   box.addEventListener('pointerdown', (e) => {
     const fromGrip = !!(e.target.closest && e.target.closest('.sheet-grip'));
     if (!fromGrip) {
+      // A mouse drag inside the sheet is text selection, not a dismiss gesture
+      if (e.pointerType === 'mouse') return;
       if (box.scrollTop > 0) return;
       if (/^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
       // Don't hijack drags inside a nested scroller that isn't at its top
