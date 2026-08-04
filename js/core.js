@@ -81,7 +81,8 @@ const DEFAULT_TYPE_COLORS = {
   'APC/UPS':         '#ffee44',
   'Misc.':           '#778899',
   'Misc Rack-Mounted': '#aabbcc',
-  'Other':           '#c9a66b'
+  'Other':           '#c9a66b',
+  'Uplink':          '#c8ff00'   // port-type override only, not a device type
 };
 
 function dtColor(deviceType) {
@@ -928,7 +929,20 @@ function _printHtml(title, bodyHtml, css) {
   setTimeout(() => w.print(), 600);
 }
 
+// A sheet can register a hook that runs when the user DISMISSES it
+// (scrim tap or swipe-down) rather than tapping an explicit button —
+// the device editor uses it to save instead of silently discarding edits.
+let _modalDismissHook = null;
+
+function _dismissModal() {
+  const hook = _modalDismissHook;
+  _modalDismissHook = null;
+  if (hook) { try { hook(); } catch (e) { console.warn('dismiss hook failed', e); } }
+  closeModal();
+}
+
 function openModal(html, width) {
+  _modalDismissHook = null;
   const box = document.getElementById('modal-content');
   box.innerHTML = '<div class="sheet-grip"></div>' + html;
   box.classList.remove('modal-wide');
@@ -941,6 +955,7 @@ function openModal(html, width) {
 }
 
 function closeModal() {
+  _modalDismissHook = null;
   const box = document.getElementById('modal-content');
   box.classList.remove('modal-wide');
   box.style.transform = '';
@@ -954,8 +969,8 @@ function closeModal() {
   const box = document.getElementById('modal-content');
   if (!overlay || !box) return;
 
-  // Tap outside the sheet closes it
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  // Tap outside the sheet closes it (saving first if a dismiss hook is set)
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) _dismissModal(); });
 
   // Drag the sheet down to dismiss (from the grip, or from the body when scrolled to top)
   let drag = null;
@@ -997,7 +1012,7 @@ function closeModal() {
     box.style.transition = 'transform .18s ease-out';
     if (wasDragging && dy > 110) {
       box.style.transform = 'translateY(110%)';
-      setTimeout(closeModal, 170);
+      setTimeout(_dismissModal, 170);
     } else {
       box.style.transform = '';
     }

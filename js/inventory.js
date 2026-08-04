@@ -11,7 +11,7 @@ function _devicesAddSheet() {
     <div class="sheet-sep"></div>
     <div class="sheet-item" onclick="closeModal();importAngryIP()"><span class="si-ico">⊛</span><div>Import network scan<div class="si-sub">HyperNetworkScanner / Angry IP CSV — with filters</div></div></div>
     <div class="sheet-item" onclick="closeModal();importArpTable()"><span class="si-ico">⌗</span><div>Paste ARP table</div></div>
-    <div class="sheet-item" onclick="closeModal();importScanCSV()"><span class="si-ico">⇩</span><div>Import CSV file</div></div>
+    <div class="sheet-item" onclick="closeModal();importScanCSV()"><span class="si-ico">⇩</span><div>Import CSV file<div class="si-sub">Auto-detects scanner exports — or map columns yourself</div></div></div>
   `);
 }
 
@@ -381,7 +381,7 @@ function openDeviceModal(id) {
     <div class="form-row-inline">
       <div class="form-row" id="ports-field" style="${showPorts?'':'display:none'}">
         <label>Ports</label>
-        <input class="form-control" id="d-ports" type="number" min="1" max="512" value="${d?.ports||24}" inputmode="numeric">
+        <input class="form-control" id="d-ports" type="number" min="0" max="512" value="${d ? (d.ports || 0) : 24}" inputmode="numeric">
       </div>
       <div class="form-row" id="uheight-field" style="${RACK_MOUNTABLE.has(curType)?'':'display:none'}">
         <label>U Height</label>
@@ -405,6 +405,9 @@ function openDeviceModal(id) {
       <button class="btn btn-primary" onclick="saveDevice('${id||''}')">Save</button>
     </div>
   `);
+  // Swiping the sheet away / tapping outside SAVES an existing device's edits
+  // instead of silently discarding them (Cancel still discards explicitly).
+  if (!isNew) _modalDismissHook = () => saveDevice(id);
   if (isNew) setTimeout(() => document.getElementById('d-name')?.focus(), 50);
 }
 
@@ -437,6 +440,11 @@ function saveDevice(id) {
     if (c) conflicts.push(`MAC ${macVal} is already on "${c.name}"`);
   }
   if (conflicts.length && !confirm(`⚠ Possible duplicate:\n\n${conflicts.join('\n')}\n\nSave anyway?`)) return;
+  // Empty/garbage ports field keeps the device's current count instead of
+  // silently snapping back to 24
+  const portsVal = parseInt(document.getElementById('d-ports')?.value);
+  const oldDev = id ? p.devices.find(d => d.id === id) : null;
+  let quietNoChange = false;
   const data = {
     name, deviceType,
     type: deviceType === 'Switch' ? 'switching' : 'non-switching',
@@ -444,7 +452,7 @@ function saveDevice(id) {
     mac: macVal,
     manufacturer: document.getElementById('d-mfr')?.value?.trim() || '',
     model: document.getElementById('d-model')?.value?.trim() || '',
-    ports: hasPorts ? parseInt(document.getElementById('d-ports')?.value) || 24 : 0,
+    ports: hasPorts ? (Number.isFinite(portsVal) && portsVal >= 0 ? portsVal : (oldDev ? oldDev.ports || 0 : 24)) : 0,
     notes: document.getElementById('d-notes')?.value?.trim() || '',
     deviceUHeight,
     status: document.getElementById('d-status')?.value || ''
@@ -463,15 +471,19 @@ function saveDevice(id) {
       if ((old.ports||0) !== (data.ports||0)) changes.push(`ports: ${old.ports||0} → ${data.ports||0}`);
       if ((old.notes||'') !== data.notes) changes.push(`notes changed`);
       if ((old.deviceUHeight||1) !== (data.deviceUHeight||1)) changes.push(`U-height: ${old.deviceUHeight||1}U → ${data.deviceUHeight||1}U`);
+      if ((old.status||'') !== data.status) changes.push(`status changed`);
       Object.assign(p.devices[idx], data);
-      logChange(`Device updated: ${name}${changes.length ? ' — ' + changes.join('; ') : ''}`);
+      // A dismiss with nothing edited shouldn't spam the changelog or toast
+      if (changes.length) logChange(`Device updated: ${name} — ${changes.join('; ')}`);
+      else quietNoChange = true;
     }
   } else {
     const newDev = { id: genId(), ...data, rackId: null, rackU: null, portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {}, addedDate: new Date().toISOString() };
     p.devices.push(newDev);
     logChange(`Device added: ${name} (${deviceType})${data.ip?' IP:'+data.ip:''}${data.mac?' MAC:'+data.mac:''}`);
   }
-  save(); closeModal(); refreshView(); toast(id ? 'Device updated' : 'Device added', 'success');
+  save(); closeModal(); refreshView();
+  if (!quietNoChange) toast(id ? 'Device updated' : 'Device added', 'success');
 }
 
 // ─── Duplicate: same make/model/type/notes, blank identity (IP/MAC/rack/ports) ───
@@ -708,28 +720,10 @@ async function commitImportReview() {
 // ═══════════════════════════════════════════
 function importScanCSV() { document.getElementById('csv-input')?.click(); }
 
-function handleCSVImport(e) {
-  const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const p = getProject();
-    const lines = ev.target.result.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('name'));
-    const candidates = []; let skipped = 0;
-    lines.forEach(line => {
-      const [name, type, ip, mac, manufacturer, model, ports] = line.split(',').map(s => s.trim());
-      if (!name) return;
-      const hasName = name && name !== ip;
-      const hasMac  = mac && mac.length > 0;
-      if (!hasName && !hasMac) { skipped++; return; }
-      if (ip && p.devices.find(d => d.ip === ip)) { skipped++; return; }
-      candidates.push({ id: genId(), name, deviceType: type||'Misc.', type: type||'non-switching', ip: ip||'', mac: mac||'', manufacturer: manufacturer||'', model: model||'', ports: parseInt(ports)||0, notes:'', rackId:null, rackU:null, portAssignments:{}, portNotes:{}, portVlans:{}, portPeerPort:{}, portPoe:{}, portLabels:{} });
-    });
-    e.target.value = '';
-    if (candidates.length === 0) { toast(`No valid rows${skipped?' — '+skipped+' skipped':''}`, 'error'); return; }
-    showImportReviewNamed(candidates, `CSV File${skipped?' ('+skipped+' pre-filtered)':''}`);
-  };
-  reader.readAsText(file);
-}
+// Both CSV pickers ("Import CSV file" and "Import network scan") feed the
+// same pipeline: sniff the header, auto-map the columns, and fall back to
+// the manual column-mapping sheet when the file isn't recognisable.
+function handleCSVImport(e) { _csvPickFile(e); }
 
 function importArpTable() {
   openModal(`
@@ -796,88 +790,220 @@ function parseArpCandidates(text) {
 function importAngryIP() { document.getElementById('angry-ip-input')?.click(); }
 
 // ═══════════════════════════════════════════
-//  NETWORK SCAN IMPORT — HyperNetworkScanner /
-//  Angry IP CSVs, with a pre-import filter
-//  stage (ghost pings, dead hosts, dup MACs,
-//  subnet/VLAN selection, existing devices)
+//  NETWORK SCAN / CSV IMPORT — header-driven
+//  column auto-detection (HyperNetworkScanner,
+//  Angry IP, our own template) with a manual
+//  column-mapping editor for odd files, then
+//  a pre-import filter stage (ghost pings,
+//  dead hosts, dup MACs, subnet/VLAN
+//  selection, existing devices).
+//  Known headers, handled automatically:
+//    IP,Ping,Hostname,Ports,MAC Address,MAC Vendor[,Subnet]
+//    IP,MAC,Hostname,Ports,Ping,MAC Vendor,Last Seen On,Date/Time Last Seen,Seen On,Subnet
+//    name,type,ip,mac,manufacturer,model,ports
+//  plus headerless Angry IP plain exports (tab or comma).
 // ═══════════════════════════════════════════
 let _scanRows = [];
 let _scanFilters = null;
 let _scanUpdates = [];
 let _scanSource = '';
 
-function handleAngryIPImport(e) {
+function handleAngryIPImport(e) { _csvPickFile(e); }
+
+function _csvPickFile(e) {
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = (ev) => {
     e.target.value = '';
-    const rows = _parseScanRows(ev.target.result);
-    if (rows.length === 0) { toast('No scan rows found in that file', 'error'); return; }
-    _scanRows = rows;
-    _scanSource = file.name.replace(/\.(csv|txt)$/i, '');
-    // Re-scan of a documented site? (several MACs already known) → default to
-    // updating IPs instead of skipping those devices.
-    const macKey = m => String(m || '').toUpperCase().replace(/[^A-F0-9]/g, '');
-    const known = new Set(getProject().devices.map(d => macKey(d.mac)).filter(Boolean));
-    const withMac = rows.filter(r => r.mac);
-    const matches = withMac.filter(r => known.has(macKey(r.mac))).length;
-    const reScan = matches >= 3 || (withMac.length > 0 && matches / withMac.length >= 0.3);
-    _scanFilters = { noMac: true, dead: true, dupMac: true, existing: reScan ? 'update' : 'skip', subnetsOff: new Set() };
-    _scanFilterSheet();
-    if (reScan) toast(`${matches} known devices found — set to update their IPs`, 'success');
+    _csvBegin(String(ev.target.result || ''), file.name.replace(/\.(csv|txt)$/i, ''));
   };
   reader.readAsText(file);
 }
 
-// Header-driven parser — handles every HyperNetworkScanner CSV era:
-//   IP,Ping,Hostname,Ports,MAC Address,MAC Vendor[,Subnet]
-//   IP,Ping,Hostname,Ports,MAC Address,MAC Vendor,Seen On
-//   IP,MAC,Hostname,Ports,Ping,MAC Vendor,Last Seen On,Date/Time Last Seen,Seen On,Subnet
-// plus plain Angry IP exports (same columns, tab or comma separated).
-function _parseScanRows(raw) {
-  const lines = String(raw || '').split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim());
-  if (!lines.length) return [];
-  const delim = (lines[0].includes('\t') && !lines[0].includes(',')) ? '\t' : ',';
-  const split = line => delim === ',' ? parseCSVLine(line) : line.split('\t').map(c => c.trim());
-  const header = split(lines[0]).map(h => h.toLowerCase().replace(/['"]/g, '').trim());
-  const col = {};
-  header.forEach((h, i) => {
-    if (col.ip === undefined && /^ip$|ip.?addr/.test(h))          col.ip = i;
-    if (col.hostname === undefined && /host/.test(h))             col.hostname = i;
-    if (col.ping === undefined && /ping|latency|rtt/.test(h))     col.ping = i;
-    if (col.mac === undefined && /^mac$|mac.?addr/.test(h))       col.mac = i;
-    if (col.vendor === undefined && /vendor|manufacturer/.test(h)) col.vendor = i;
-    if (col.ports === undefined && /port/.test(h))                col.ports = i;
-    if (col.subnet === undefined && /subnet|vlan/.test(h))        col.subnet = i;
-    if (/^seen on$/.test(h))                                      col.seenOn = i;
-    if (/date.?\/?.?time|last seen$/.test(h) && !/on/.test(h.replace('last seen', ''))) col.seenAt = i;
-    if (/^date\/time last seen$/.test(h))                         col.seenAt = i;
-  });
-  const hasHeader = col.ip !== undefined;
-  if (!hasHeader) { col.ip = 0; col.ping = 1; col.hostname = 2; col.ports = 3; col.mac = 4; col.vendor = 5; }
+// One entry per field the app can fill: [key, label, header-regex].
+// The regex drives auto-detection; the mapping sheet lets the user
+// override any of it for oddly named or repositioned columns.
+const _CSV_FIELDS = [
+  ['ip',        'IP address',          /^ip$|ip.?add/],
+  ['name',      'Name / hostname',     /host|^name$|device.?name/],
+  ['mac',       'MAC address',         /^mac$|mac.?add/],
+  ['vendor',    'Manufacturer',        /vendor|manufactur|brand/],
+  ['model',     'Model',               /model/],
+  ['dtype',     'Device type',         /^type$|device.?type|category/],
+  ['ping',      'Ping / response',     /ping|latency|rtt/],
+  ['openPorts', 'Open ports',          /open.?port/],
+  ['portCount', 'Port count (switch)', /port.?count|number.?of.?ports/],
+  ['subnet',    'Subnet / VLAN',       /subnet|vlan/],
+  ['seenOn',    'Seen on (switch)',    /seen.?on/],
+  ['seenAt',    'Scan date/time',      /date.?time|last.?seen$|scan.?(date|time)/],
+  ['notes',     'Notes',               /note|comment|descri/],
+];
 
-  const clean = v => { const s = String(v || '').replace(/^["']|["']$/g, '').trim(); return /^\[?n\/?a\]?$/i.test(s) ? '' : s; };
+let _csvLines = [], _csvDelim = ',', _csvHasHeader = true, _csvMap = {};
+
+function _csvEmptyMap() { const m = {}; _CSV_FIELDS.forEach(([k]) => m[k] = -1); return m; }
+function _csvSplit(line) { return _csvDelim === ',' ? parseCSVLine(line) : line.split('\t').map(c => c.trim()); }
+function _csvClean(v) { const s = String(v == null ? '' : v).replace(/^["']|["']$/g, '').trim(); return /^\[?n\/?a\]?$/i.test(s) ? '' : s; }
+
+function _csvAutoMap(cells) {
+  const map = _csvEmptyMap(); const used = new Set();
+  cells.forEach((raw, i) => {
+    const h = String(raw || '').toLowerCase().replace(/['"]/g, '').trim();
+    if (!h) return;
+    for (const [k, , re] of _CSV_FIELDS) {
+      if (map[k] !== -1 || !re.test(h)) continue;
+      map[k] = i; used.add(i); break;
+    }
+  });
+  // A bare "Ports" column is an open-port list on scanner exports but a
+  // port COUNT on inventory sheets (which also carry type/model columns).
+  if (map.openPorts === -1 && map.portCount === -1) {
+    const pi = cells.findIndex(c => /^ports?$/i.test(String(c || '').replace(/['"]/g, '').trim()));
+    if (pi !== -1 && !used.has(pi)) {
+      if (map.dtype !== -1 || map.model !== -1) map.portCount = pi; else map.openPorts = pi;
+    }
+  }
+  return map;
+}
+
+function _csvBegin(raw, sourceName) {
+  const lines = String(raw || '').split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim());
+  if (!lines.length) { toast('That file is empty', 'error'); return; }
+  _csvDelim = (lines[0].includes('\t') && !lines[0].includes(',')) ? '\t' : ',';
+  _csvLines = lines;
+  _scanSource = sourceName;
+  _scanFilters = null;
+  const first = _csvSplit(lines[0]);
+  _csvHasHeader = !first.some(c => /^\d{1,3}(\.\d{1,3}){3}$/.test(String(c).trim()));
+  _csvMap = _csvHasHeader
+    ? _csvAutoMap(first)
+    // Headerless Angry IP plain export: fixed column order
+    : Object.assign(_csvEmptyMap(), { ip: 0, ping: 1, name: 2, openPorts: 3, mac: 4, vendor: 5 });
+  _scanRows = _csvBuildRows();
+  const usable = _scanRows.some(r => r.ip || r.mac);
+  if (!_scanRows.length || !usable) { _csvMappingSheet(true); return; }
+  _csvDefaultFilters();
+  _scanFilterSheet();
+}
+
+function _csvBuildRows() {
+  const m = _csvMap;
+  const scanStyle = m.ping >= 0;
+  const g = (c, k) => (m[k] === undefined || m[k] < 0) ? '' : _csvClean(c[m[k]]);
   const rows = [];
-  (hasHeader ? lines.slice(1) : lines).forEach(line => {
-    const c = split(line);
-    const ip = clean(c[col.ip]);
-    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return;
-    const pingRaw = clean(c[col.ping]);
-    const mac = clean(c[col.mac]).toUpperCase().replace(/-/g, ':');
+  _csvLines.slice(_csvHasHeader ? 1 : 0).forEach(line => {
+    const c = _csvSplit(line);
+    let ip = g(c, 'ip');
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) ip = '';
+    const name = g(c, 'name');
+    if (!ip && !name) return;
+    const pingRaw = g(c, 'ping');
+    let mac = g(c, 'mac').toUpperCase().replace(/-/g, ':');
+    if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) mac = '';
+    const subCol = g(c, 'subnet');
     rows.push({
       ip,
       alive: !/^dead$/i.test(pingRaw),
       ping: pingRaw,
-      hostname: clean(c[col.hostname]),
-      mac: /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac) ? mac : '',
-      vendor: clean(c[col.vendor]),
-      openPorts: clean(c[col.ports]).split(/[,;]\s*/).map(s => parseInt(s)).filter(n => n > 0),
-      subnet: clean(c[col.subnet]) || ip.split('.').slice(0, 3).join('.') + '.0/24',
-      seenOn: clean(c[col.seenOn]),
-      seenAt: clean(c[col.seenAt])
+      hostname: name,
+      mac,
+      vendor: g(c, 'vendor'),
+      model: g(c, 'model'),
+      dtype: g(c, 'dtype'),
+      portCount: parseInt(g(c, 'portCount')) || 0,
+      extraNotes: g(c, 'notes'),
+      openPorts: g(c, 'openPorts').split(/[,;]\s*/).map(s => parseInt(s)).filter(n => n > 0),
+      subnet: subCol || (ip ? ip.split('.').slice(0, 3).join('.') + '.0/24' : '—'),
+      noteSubnet: !!subCol || scanStyle,
+      seenOn: g(c, 'seenOn'),
+      seenAt: g(c, 'seenAt')
     });
   });
   return rows;
+}
+
+// Scanner exports (ping column present) default to the noise filters;
+// plain inventory sheets import everything. Re-scan of a documented site
+// (several MACs already known) → default to updating IPs instead of
+// skipping those devices.
+function _csvDefaultFilters() {
+  const macKey = m => String(m || '').toUpperCase().replace(/[^A-F0-9]/g, '');
+  const known = new Set(getProject().devices.map(d => macKey(d.mac)).filter(Boolean));
+  const withMac = _scanRows.filter(r => r.mac);
+  const matches = withMac.filter(r => known.has(macKey(r.mac))).length;
+  const reScan = matches >= 3 || (withMac.length > 0 && matches / withMac.length >= 0.3);
+  const scanStyle = _csvMap.ping >= 0;
+  _scanFilters = {
+    noMac: scanStyle && _csvMap.mac >= 0,
+    dead: scanStyle,
+    dupMac: _csvMap.mac >= 0,
+    existing: reScan ? 'update' : 'skip',
+    subnetsOff: new Set()
+  };
+  if (reScan) toast(`${matches} known devices found — set to update their IPs`, 'success');
+}
+
+// ── Manual column-mapping editor ──
+function _csvMappingSheet(autoFailed) {
+  const first = _csvSplit(_csvLines[0]);
+  const sample = _csvSplit(_csvLines[(_csvHasHeader && _csvLines.length > 1) ? 1 : 0] || '');
+  const nCols = Math.max(first.length, sample.length);
+  const colName = i => _csvHasHeader ? (String(first[i] || '').replace(/['"]/g, '').trim() || 'Column ' + (i + 1)) : 'Column ' + (i + 1);
+  const opts = k => {
+    let o = `<option value="-1" ${_csvMap[k] < 0 ? 'selected' : ''}>—</option>`;
+    for (let i = 0; i < nCols; i++) {
+      const ex = _csvClean(sample[i]);
+      o += `<option value="${i}" ${_csvMap[k] === i ? 'selected' : ''}>${esc(colName(i))}${ex ? ' · "' + esc(ex.length > 16 ? ex.slice(0, 15) + '…' : ex) + '"' : ''}</option>`;
+    }
+    return o;
+  };
+  openModal(`
+    <h3>⚙ CSV Column Mapping</h3>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:12px">${autoFailed
+      ? 'Couldn&#39;t recognise this file&#39;s columns automatically — match them up below.'
+      : 'Adjust which column of the file feeds each field.'}</p>
+    <label class="rpt-opt"><input type="checkbox" id="csvm-header" ${_csvHasHeader ? 'checked' : ''} onchange="_csvHeaderToggle(this.checked)">First row is column headers</label>
+    <div style="max-height:44vh;overflow-y:auto;margin-bottom:4px">
+      ${_CSV_FIELDS.map(([k, label]) => `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">
+          <label style="flex:0 0 132px;font-size:12.5px;color:var(--text2)">${label}</label>
+          <select class="form-control" id="csvm-${k}" style="flex:1;min-width:0;padding:8px">${opts(k)}</select>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:11.5px;color:var(--text3)">Map at least IP address or Name.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="_csvMappingCancel()">Cancel</button>
+      <button class="btn btn-primary" onclick="_csvApplyMapping()">Continue ⇢</button>
+    </div>`);
+}
+
+function _csvReadMappingUI() {
+  _CSV_FIELDS.forEach(([k]) => {
+    const sel = document.getElementById('csvm-' + k);
+    if (sel && sel.value !== '') _csvMap[k] = parseInt(sel.value);
+  });
+}
+
+function _csvHeaderToggle(checked) {
+  _csvReadMappingUI();
+  _csvHasHeader = checked;
+  if (checked && Object.values(_csvMap).every(v => v < 0)) _csvMap = _csvAutoMap(_csvSplit(_csvLines[0]));
+  _csvMappingSheet();
+}
+
+function _csvMappingCancel() {
+  if (_scanFilters && _scanRows.length) _scanFilterSheet();
+  else closeModal();
+}
+
+function _csvApplyMapping() {
+  _csvReadMappingUI();
+  if (_csvMap.ip < 0 && _csvMap.name < 0) { toast('Map the IP or Name column first', 'error'); return; }
+  const rows = _csvBuildRows();
+  if (!rows.length) { toast('No usable rows with that mapping', 'error'); return; }
+  _scanRows = rows;
+  _csvDefaultFilters();
+  _scanFilterSheet();
 }
 
 // Best-guess device type from hostname/vendor keywords, service ports and
@@ -904,14 +1030,15 @@ function _scanName(r) {
   let h = (r.hostname || '').replace(/\.(localdomain|local|lan|home|arpa)$/i, '');
   if (h) return h;
   if (r.vendor && r.mac) return r.vendor + ' ' + r.mac.slice(-5).replace(':', '');
-  return r.ip;
+  return r.ip || 'Device';
 }
 
 function _scanNotes(r) {
   return [
+    r.extraNotes || '',
     r.openPorts.length ? 'Open: ' + r.openPorts.join(', ') : '',
     r.seenOn ? 'Seen: ' + r.seenOn : '',
-    'Subnet: ' + r.subnet,
+    r.noteSubnet ? 'Subnet: ' + r.subnet : '',
     r.seenAt ? 'Scanned: ' + r.seenAt : ''
   ].filter(Boolean).join(' | ');
 }
@@ -941,7 +1068,7 @@ function _scanPartition() {
     }
     out.newDevs.push(r);
   }
-  const ipNum = ip => ip.split('.').reduce((a, o) => a * 256 + (+o), 0);
+  const ipNum = ip => ip ? ip.split('.').reduce((a, o) => a * 256 + (+o), 0) : 0;
   out.newDevs.sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
   return out;
 }
@@ -958,8 +1085,11 @@ function _scanFilterSheet() {
       <span class="si-sub" id="scf-${key}-n"></span>
     </label>`;
   openModal(`
-    <h3>⊛ Network Scan Import</h3>
-    <div style="font-size:12px;color:var(--text3);font-family:var(--mono);margin-bottom:10px">${esc(_scanSource)} · ${_scanRows.length} rows · ${subnets.length} subnet${subnets.length !== 1 ? 's' : ''}</div>
+    <h3>⊛ Scan / CSV Import</h3>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="flex:1;min-width:0;font-size:12px;color:var(--text3);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_scanSource)} · ${_scanRows.length} rows · ${subnets.length} subnet${subnets.length !== 1 ? 's' : ''}</div>
+      ${_csvLines.length ? `<button class="btn btn-ghost btn-sm" style="flex-shrink:0;padding:5px 10px;font-size:11.5px" onclick="_csvMappingSheet()">⚙ Columns</button>` : ''}
+    </div>
     ${tgl('noMac', 'Skip ghosts (ping, no MAC)', 'Responded but no hardware address — usually noise')}
     ${tgl('dead', 'Skip dead hosts', 'No ping response at scan time')}
     ${tgl('dupMac', 'Skip duplicate MACs', 'Same device on several IPs — keeps the newest sighting')}
@@ -1018,12 +1148,16 @@ function _scanContinue() {
     return;
   }
   const candidates = part.newDevs.map(r => {
-    const deviceType = _guessDeviceType(r);
+    // A mapped type column wins (matched to a known type case-insensitively);
+    // otherwise fall back to the hostname/vendor/port heuristics.
+    const deviceType = r.dtype
+      ? (DEVICE_TYPES.find(t => t.toLowerCase() === r.dtype.toLowerCase()) || r.dtype)
+      : _guessDeviceType(r);
     return {
       id: genId(), name: _scanName(r), ip: r.ip, mac: r.mac,
-      manufacturer: r.vendor, model: '',
+      manufacturer: r.vendor, model: r.model || '',
       deviceType, type: deviceType === 'Switch' ? 'switching' : 'non-switching',
-      ports: deviceType === 'Switch' ? 24 : 0,
+      ports: r.portCount || (deviceType === 'Switch' ? 24 : 0),
       notes: _scanNotes(r),
       ipHistory: r.ip ? [{ ip: r.ip, ts: r.seenAt || new Date().toISOString(), src: 'scan' }] : [],
       rackId: null, rackU: null,

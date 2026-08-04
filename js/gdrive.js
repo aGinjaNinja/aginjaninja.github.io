@@ -716,7 +716,7 @@ function _showDriveSyncStatus(status, detail) {
   if (!el) {
     el = document.createElement('div');
     el.id = 'gdrive-sync-indicator';
-    el.style.cssText = 'position:fixed;bottom:10px;right:10px;font-size:11px;font-family:var(--mono);padding:5px 12px;border-radius:5px;z-index:100;transition:opacity .4s;pointer-events:none;border:1px solid';
+    el.style.cssText = 'position:fixed;top:calc(6px + env(safe-area-inset-top, 0px));left:10px;font-size:11px;font-family:var(--mono);padding:5px 12px;border-radius:5px;z-index:100;transition:opacity .4s;pointer-events:none;border:1px solid;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
     document.body.appendChild(el);
   }
   el.style.opacity = '1';

@@ -21,6 +21,14 @@ function togglePortList(id) {
   renderRacks();
 }
 
+// Collapsed racks show just the header (name · size) — tap it to expand.
+let _rackCollapsed = (function(){ try { return new Set(JSON.parse(localStorage.getItem('netrack_rackcollapse') || '[]')); } catch(e) { return new Set(); } })();
+function toggleRackCollapse(id) {
+  if (_rackCollapsed.has(id)) _rackCollapsed.delete(id); else _rackCollapsed.add(id);
+  try { localStorage.setItem('netrack_rackcollapse', JSON.stringify([..._rackCollapsed])); } catch(e) {}
+  renderRacks();
+}
+
 // Readable wiring-chart view of a device's ports: one full-width row per
 // port that has anything on it, open ports collapsed into tap chips.
 function buildPortListHTML(dev, p) {
@@ -141,6 +149,7 @@ function renderRacks() {
     // Column packing: phones get 1 column; wide screens pack racks side by side
     function estimateRackPx(r) {
       const HEADER = 56, BODY_PAD = 16;
+      if (_rackCollapsed.has(r.id)) return HEADER;
       let px = 0;
       for (let u = 1; u <= r.uHeight; u++) {
         const dev = p.devices.find(d => d.rackId === r.id && d.rackU === u);
@@ -353,17 +362,23 @@ function buildPatchPanelFaceplate(dev, p) {
 function buildRackHTML(rack, p) {
   const isAsc = rack.uDirection === 'asc';
   const dirLabel = isAsc ? '↑ U1 bottom' : '↓ U1 top';
-  let html = `<div class="rack-container" id="rack-${rack.id}">
+  const collapsed = _rackCollapsed.has(rack.id);
+  const devCount = p.devices.filter(d => d.rackId === rack.id).length;
+  const headHtml = `
     <div class="rack-header">
-      <div class="rack-header-left">
-        <h3>${esc(rack.name)}</h3>
-        <p>${esc(rack.location||'No location')} · ${rack.uHeight}U · ${dirLabel}</p>
+      <div class="rack-header-left" onclick="toggleRackCollapse('${rack.id}')" title="${collapsed ? 'Expand rack' : 'Collapse rack'}">
+        <h3><span class="rack-caret">${collapsed ? '▸' : '▾'}</span>${esc(rack.name)}</h3>
+        <p>${collapsed
+          ? `${rack.uHeight}U · ${devCount} device${devCount !== 1 ? 's' : ''}${rack.location ? ' · ' + esc(rack.location) : ''}`
+          : `${esc(rack.location||'No location')} · ${rack.uHeight}U · ${dirLabel}`}</p>
       </div>
       ${_rackEditMode ? `<div style="display:flex;gap:6px;flex-shrink:0">
         <button class="btn btn-ghost btn-sm btn-icon" onclick="editRack('${rack.id}')" title="Edit rack">✎</button>
         <button class="btn btn-danger btn-sm btn-icon" onclick="deleteRack('${rack.id}')" title="Delete rack">✕</button>
       </div>` : ''}
-    </div>
+    </div>`;
+  if (collapsed) return `<div class="rack-container rack-collapsed" id="rack-${rack.id}">${headHtml}</div>`;
+  let html = `<div class="rack-container" id="rack-${rack.id}">${headHtml}
     <div class="rack-body" oncontextmenu="return false">`;
   const uOrder = [];
   if (isAsc) {
@@ -638,9 +653,12 @@ function addDeviceToRack(rackId, u) {
     </div>
     <div class="form-row-inline">
       <div class="form-row"><label>Device Type</label>
-        <select class="form-control" id="rsd-type">${typeOpts}</select>
+        <select class="form-control" id="rsd-type" onchange="_rsdTypeChanged()">${typeOpts}</select>
       </div>
-      <div class="form-row" style="flex:0 0 92px"><label>U Height</label>
+      <div class="form-row" style="flex:0 0 82px"><label>Ports</label>
+        <input class="form-control" id="rsd-ports" type="number" min="0" max="512" value="24" inputmode="numeric">
+      </div>
+      <div class="form-row" style="flex:0 0 82px"><label>U Height</label>
         <select class="form-control" id="rsd-uheight">
           ${[1,2,3,4,6,8].map(n=>`<option value="${n}">${n}U</option>`).join('')}
         </select>
@@ -652,6 +670,13 @@ function addDeviceToRack(rackId, u) {
     </div>
   `);
   setTimeout(() => document.getElementById('rsd-name')?.focus(), 50);
+}
+
+// Sensible port-count default per type, applied when the type changes
+function _rsdTypeChanged() {
+  const t = document.getElementById('rsd-type')?.value;
+  const el = document.getElementById('rsd-ports');
+  if (el) el.value = t === 'Switch' || t === 'Patch Panel' ? 24 : t === 'Fiber Enclosure' ? 12 : 0;
 }
 
 function saveDeviceToRack() {
@@ -668,15 +693,17 @@ function saveDeviceToRack() {
     const blocker = p.devices.find(d => d.rackId === rackId && d.rackU && d.rackU <= cu && cu < d.rackU + (d.deviceUHeight||1));
     if (blocker) return toast(`U${cu} is occupied by ${blocker.name}`, 'error');
   }
-  const dev = {
+  const portsVal = parseInt(document.getElementById('rsd-ports')?.value);
+  const dev = migrateDevice({
     id: genId(), name, deviceType: type,
     type: type === 'Switch' ? 'switching' : 'non-switching',
     ip: '', mac: '', manufacturer: '', model: '', notes: '',
-    ports: type === 'Switch' ? 24 : type === 'Patch Panel' ? 24 : type === 'Fiber Enclosure' ? 12 : 0,
+    ports: Number.isFinite(portsVal) && portsVal >= 0 ? portsVal
+      : type === 'Switch' || type === 'Patch Panel' ? 24 : type === 'Fiber Enclosure' ? 12 : 0,
     deviceUHeight: uheight, rackId, rackU: u,
     portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
     status: '', addedDate: new Date().toISOString()
-  };
+  });
   p.devices.push(dev);
   logChange(`Device added to rack at U${u}: ${name}`);
   save(); closeModal(); renderRacks();
@@ -993,6 +1020,7 @@ function assignPort(switchId, portNum) {
     <div class="form-row"><label>Port Type <span style="color:var(--text3)">(color-codes the port — no device needed)</span></label>
       <select class="form-control" id="port-type-ovr">
         <option value="">— Auto (from connected device) —</option>
+        <option value="Uplink" ${currOvr === 'Uplink' ? 'selected' : ''}>⇡ Uplink</option>
         ${DEVICE_TYPES.map(t => `<option value="${t}" ${currOvr === t ? 'selected' : ''}>${t}</option>`).join('')}
       </select></div>
     ${isFiberEnc ? `
