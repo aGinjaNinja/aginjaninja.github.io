@@ -244,7 +244,9 @@ th.th-check, td.td-check { width: 40px; }
 .rack-col { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 0; }
 .rack-container { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; width: 100%; }
 .rack-header { background: var(--panel); padding: 11px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.rack-header-left { min-width: 0; }
+.rack-header-left { min-width: 0; flex: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rack-caret { display: inline-block; width: 16px; color: var(--accent); font-size: 12px; }
+.rack-collapsed .rack-header { border-bottom: none; }
 .rack-header-left h3 { font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rack-header-left p { font-size: 11px; color: var(--text2); font-family: var(--mono); margin-top: 2px; }
 .rack-body { padding: 8px; user-select: none; -webkit-user-select: none; }
