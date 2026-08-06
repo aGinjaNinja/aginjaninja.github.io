@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>For Kristin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Lato:wght@300;400&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --blush:    #f5ede8;
+      --rose:     #d4a0a0;
+      --deep:     #7a4f4f;
+      --text:     #4a3030;
+      --cream:    #fdf7f4;
+      --gold:     #c8a96e;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--cream);
+      background-image:
+        radial-gradient(ellipse at 20% 20%, #f0ddd8 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 80%, #e8d5d0 0%, transparent 55%),
+        radial-gradient(ellipse at 60% 10%, #fce8e0 0%, transparent 40%);
+      font-family: 'Lato', sans-serif;
+      overflow: hidden;
+      padding: 2rem;
+    }
+
+    /* Floating petals */
+    .petals {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .petal {
+      position: absolute;
+      top: -60px;
+      width: 14px;
+      height: 18px;
+      background: radial-gradient(ellipse at 40% 35%, #f5c5c5, #e8a0a0cc);
+      border-radius: 60% 40% 60% 40% / 50% 50% 50% 50%;
+      opacity: 0;
+      animation: fall linear infinite;
+    }
+
+    @keyframes fall {
+      0%   { transform: translateY(0) rotate(0deg) translateX(0); opacity: 0; }
+      10%  { opacity: 0.7; }
+      90%  { opacity: 0.5; }
+      100% { transform: translateY(110vh) rotate(360deg) translateX(40px); opacity: 0; }
+    }
+
+    /* Card */
+    .card {
+      position: relative;
+      z-index: 1;
+      max-width: 640px;
+      width: 100%;
+      background: rgba(253, 247, 244, 0.82);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(212, 160, 160, 0.35);
+      border-radius: 2px;
+      padding: 4rem 4rem 3.5rem;
+      text-align: center;
+      box-shadow:
+        0 2px 4px rgba(122,79,79,0.06),
+        0 8px 32px rgba(122,79,79,0.12),
+        0 0 0 6px rgba(253,247,244,0.6),
+        0 0 0 7px rgba(212,160,160,0.18);
+      opacity: 0;
+      transform: translateY(18px);
+      animation: rise 1.2s cubic-bezier(.22,1,.36,1) 0.3s forwards;
+    }
+
+    @keyframes rise {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Decorative top ornament */
+    .ornament {
+      display: block;
+      margin: 0 auto 2rem;
+      color: var(--gold);
+      font-size: 1.1rem;
+      letter-spacing: 0.5em;
+      opacity: 0;
+      animation: fade 1s ease 1s forwards;
+    }
+
+    @keyframes fade { to { opacity: 1; } }
+
+    /* Message */
+    .message {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 300;
+      font-size: clamp(1.45rem, 3.5vw, 2rem);
+      line-height: 1.75;
+      color: var(--text);
+      letter-spacing: 0.01em;
+      opacity: 0;
+      animation: fade 1.2s ease 1.3s forwards;
+    }
+
+    .message em {
+      font-style: italic;
+      color: var(--deep);
+    }
+
+    .message .wink {
+      display: inline-block;
+      color: var(--rose);
+      font-style: normal;
+    }
+
+    /* Divider */
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin: 2.2rem auto 0;
+      max-width: 220px;
+      opacity: 0;
+      animation: fade 1s ease 1.8s forwards;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--rose), transparent);
+    }
+
+    .divider-heart {
+      color: var(--rose);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating petals -->
+  <div class="petals" id="petals"></div>
+
+  <div class="card">
+    <span class="ornament">✦ &nbsp; ✦ &nbsp; ✦</span>
+
+    <p class="message">
+      Hey Babester!! I can't wait to live together!
+      Whichever house you pick, I will make sure to make it a home.
+      You can't miss<em>(Ms.)</em>…
+      hell, pretty soon you'll be <em>Mrs.</em>
+      <span class="wink">&nbsp;;)</span>
+    </p>
+
+    <div class="divider">
+      <span class="divider-heart">♡</span>
+    </div>
+  </div>
+
+  <script>
+    // Generate petals
+    const container = document.getElementById('petals');
+    for (let i = 0; i < 22; i++) {
+      const p = document.createElement('div');
+      p.className = 'petal';
+      p.style.left        = Math.random() * 100 + 'vw';
+      p.style.animationDuration  = (7 + Math.random() * 10) + 's';
+      p.style.animationDelay     = (Math.random() * 14) + 's';
+      p.style.transform   = `rotate(${Math.random()*360}deg) scale(${0.6 + Math.random()*0.8})`;
+      container.appendChild(p);
+    }
+  </script>
+</body>
+</html>

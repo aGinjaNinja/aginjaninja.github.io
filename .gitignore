@@ -1,0 +1,20 @@
+# ── Never publish: local dev, builds, and credentials ──
+node_modules/
+android/
+www/
+_legacy_backup/
+scripts/
+Examples/
+0authClient/
+.claude/
+package.json
+package-lock.json
+capacitor.config.json
+BUILD.md
+New Text Document.txt
+*.apk
+.DS_Store
+Thumbs.db
+
+# The repo root IS the website: index.html, js/, css/, img/,
+# manifest.json, sw.js — plus CNAME / README / personal pages.
