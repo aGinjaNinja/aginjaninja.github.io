@@ -10,6 +10,30 @@ function togglePoolDock() {
   renderRacks();
 }
 
+// Tray filter — matches name, IP, MAC (with/without separators), type, mfr,
+// model. Query survives re-renders (placing a device rebuilds the dock).
+let _poolSearchQ = '';
+
+function _poolFilter() {
+  const inp = document.getElementById('pool-search');
+  if (inp) _poolSearchQ = inp.value;
+  const toks = _poolSearchQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0, total = 0;
+  document.querySelectorAll('#pool-strip .pool-chip').forEach(ch => {
+    total++;
+    const hay = ch.dataset.search || '';
+    const hit = toks.every(t => hay.includes(t) || hay.includes(t.replace(/[:\-\.]/g, '')));
+    ch.style.display = hit ? '' : 'none';
+    if (hit) shown++;
+  });
+  const cnt = document.getElementById('pool-count');
+  if (cnt) cnt.textContent = toks.length ? `${shown}/${total}` : `${total} device${total !== 1 ? 's' : ''}`;
+  // The tray height varies with the filter — keep the view clear of it
+  const dock = document.getElementById('pool-dock');
+  const va = document.getElementById('view-area');
+  if (dock && va) va.style.paddingBottom = ((dock.offsetHeight || 170) + 26) + 'px';
+}
+
 let _rackEditMode = false;
 
 // ── Per-device faceplate ⇄ list view (persisted) ──
@@ -85,7 +109,9 @@ function renderRacks() {
     <button class="btn ${_rackEditMode ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="toggleRackEdit()">${_rackEditMode ? '✓ Done' : '✎ Edit'}</button>`);
   setFab(`<button class="fab" onclick="addRack()" title="New rack">＋</button>`);
   const p = getProject();
-  const poolDevs = p.devices.filter(d => RACK_MOUNTABLE.has(d.deviceType||'Misc.') && !d.rackId);
+  // Wall spaces take ANY device type, so with a wall present the tray shows everything
+  const hasWall = p.racks.some(r => r.rackType === 'wall');
+  const poolDevs = p.devices.filter(d => !d.rackId && (hasWall || RACK_MOUNTABLE.has(d.deviceType||'Misc.')));
 
   // ── Pool dock (drag source), pinned above the bottom nav ──
   // Collapsible so a scroll swipe near the bottom can't accidentally grab a device.
@@ -103,27 +129,34 @@ function renderRacks() {
         if (va) va.style.paddingBottom = 'calc(120px + var(--safe-b))';
         fabC?.classList.add('raised-sm');
       } else {
+        const sorted = [...poolDevs].sort((a, b) => (a.name||'').localeCompare(b.name||'', undefined, { numeric: true }));
         dock.innerHTML = `
           <div class="pd-bar" onclick="togglePoolDock()">
-            <span>▾ &nbsp;Unassigned — drag up into a rack</span>
+            <span>▾ &nbsp;Unassigned — hold a device, then drag it up</span>
             <span style="color:var(--accent)">hide ▼</span>
           </div>
+          <div class="pool-tools">
+            <input class="form-control" id="pool-search" placeholder="⌕ Filter — name, IP, MAC, type…" autocomplete="off" value="${esc(_poolSearchQ)}" oninput="_poolFilter()">
+            <span class="pool-count" id="pool-count"></span>
+          </div>
           <div class="pool-strip" id="pool-strip">
-            ${poolDevs.map(d => {
+            ${sorted.map(d => {
               const c = dtColor(d.deviceType||'Misc.');
               const uh = d.deviceUHeight || 1;
-              return `<div class="pool-chip" data-device-id="${d.id}" oncontextmenu="return false">
+              const hay = [d.name, d.ip, d.mac, String(d.mac||'').replace(/[^a-fA-F0-9]/g, ''), d.deviceType, d.manufacturer, d.model]
+                .filter(Boolean).join(' ').toLowerCase();
+              return `<div class="pool-chip" data-device-id="${d.id}" data-search="${esc(hay)}" oncontextmenu="return false">
                 <span class="pc-dot" style="background:${c}"></span>
                 <span class="pc-name">${esc(d.name)}</span>
-                <span class="pc-u">${uh}U</span>
+                ${RACK_MOUNTABLE.has(d.deviceType||'Misc.') ? `<span class="pc-u">${uh}U</span>` : ''}
               </div>`;
             }).join('')}
           </div>`;
-        // Wire pointer handlers (drag up = place, tap = picker modal)
+        // Wire pointer handlers (drag up = place, drag down = scroll, tap = picker)
         dock.querySelectorAll('.pool-chip').forEach(el => {
           el.addEventListener('pointerdown', (e) => _dndDown(e, el.dataset.deviceId, null, el, true));
         });
-        if (va) va.style.paddingBottom = 'calc(185px + var(--safe-b))';
+        _poolFilter();
         fabC?.classList.add('raised');
       }
       dock.style.display = 'block';
@@ -150,6 +183,7 @@ function renderRacks() {
     function estimateRackPx(r) {
       const HEADER = 56, BODY_PAD = 16;
       if (_rackCollapsed.has(r.id)) return HEADER;
+      if (r.rackType === 'wall') return HEADER + (r.wallHeight || 380) + BODY_PAD;
       let px = 0;
       for (let u = 1; u <= r.uHeight; u++) {
         const dev = p.devices.find(d => d.rackId === r.id && d.rackU === u);
@@ -167,6 +201,8 @@ function renderRacks() {
             ...Object.keys(dev.portEndDevice || {})
           ]).size;
           px += 36 + used * 42 + 40 + 6;
+        } else if (isPP && dev.panelStyle === '66') {
+          px += 36 + Math.ceil(ports / 2) * 24 + 6;
         } else {
           px += 36 + (ports > 0 ? (isPP ? Math.ceil(ports / 12) * 40 : 38) : 6) + 6;
         }
@@ -193,6 +229,7 @@ function renderRacks() {
   document.querySelectorAll('.slot-label[data-device-id]').forEach(el => {
     el.addEventListener('pointerdown', (e) => _dndDown(e, el.dataset.deviceId, el.dataset.rackId, el, false));
   });
+  _wireWallTiles();
   _wireRackHover();
 }
 
@@ -321,6 +358,11 @@ function buildPatchPanelFaceplate(dev, p) {
   const notes       = dev.portNotes       || {};
   const PORTS_PER_ROW = 12;
 
+  // 66-block: each row is TWO terminals (left/right), each drawn with two
+  // electrically-common clips — a 50-row block is 100 ports / 200 clips.
+  const is66 = dev.panelStyle === '66';
+  const rows66 = Math.ceil(portCount / 2);
+
   const peers = dev.portPeerPort || {};
   const portEls = [];
   for (let i = 1; i <= portCount; i++) {
@@ -338,18 +380,41 @@ function buildPatchPanelFaceplate(dev, p) {
       if (circ.end && circ.link) connStr += ` · ⇄ ${circ.link.dev.name} P${circ.link.port}`;
       else if (peers[i]) connStr += ' P' + peers[i];
     }
-    const tip = `${dev.name} P${i}${label ? ' · ' + label : ''}${connStr}${fiber ? ' · Fiber ' + fiber : ''}${note ? ' · ' + note : ''}`;
+    const row66 = is66 ? (i <= rows66 ? i : i - rows66) : 0;
+    const bridged = is66 && !!(dev.bridged66 || {})[row66];
+    const tip = `${dev.name} P${i}${label ? ' · ' + label : ''}${connStr}${fiber ? ' · Fiber ' + fiber : ''}${bridged ? ' · ⌁ bridged L↔R' : ''}${note ? ' · ' + note : ''}`;
     const clrStyle = dc ? `--clr:${dc};` : '';
     const labelBold = (!assigned && label) ? 'font-weight:700;' : '';
     const cls = assigned ? ' pp-assigned' : ovr ? ' pp-typed' : (label ? ' pp-labeled' : '');
     const jack = fiber
       ? `<div class="pp-port-jack" style="background:${fiberGrad(fiber)};border-color:rgba(255,255,255,.45)"></div>`
       : `<div class="pp-port-jack"></div>`;
-    portEls.push(`<div class="pp-port${cls}" style="${clrStyle}" data-owner="${dev.id}" data-port="${i}" data-peerdev="${circ.assigned ? circ.assigned.id : ''}" data-peerport="${peers[i] || ''}" data-tip="${esc(tip)}" onclick="event.stopPropagation();assignPort('${dev.id}',${i})">
+    const shared = `data-owner="${dev.id}" data-port="${i}" data-peerdev="${circ.assigned ? circ.assigned.id : ''}" data-peerport="${peers[i] || ''}" data-tip="${esc(tip)}" onclick="event.stopPropagation();assignPort('${dev.id}',${i})"`;
+    portEls.push(is66
+      // 66 terminal: two common clips per side of the row
+      ? `<div class="pp-port${cls}" style="${clrStyle}" ${shared}>
+      <div class="pp-port-num">${i}</div>
+      <div class="pp66-clips">${jack}${jack}</div>
+      <div class="pp-port-label" style="${labelBold}">${esc(label || (assigned ? (content.name.length>5?content.name.slice(0,4)+'…':content.name) : ''))}</div>
+    </div>`
+      : `<div class="pp-port${cls}" style="${clrStyle}" ${shared}>
       <div class="pp-port-num">${i}</div>
       ${jack}
       <div class="pp-port-label" style="${labelBold}">${esc(label || (assigned ? (content.name.length>5?content.name.slice(0,4)+'…':content.name) : ''))}</div>
     </div>`);
+  }
+
+  // Vertical 66-block: terminals run DOWN the left column then DOWN the
+  // right; the punch-down spine between them takes tappable bridge clips.
+  if (is66) {
+    let rowsHtml = '';
+    for (let r = 1; r <= rows66; r++) {
+      const left = portEls[r - 1] || '<div class="pp66-spacer"></div>';
+      const right = portEls[rows66 + r - 1] || '<div class="pp66-spacer"></div>';
+      const bridged = !!(dev.bridged66 || {})[r];
+      rowsHtml += `<div class="pp66-row">${left}<div class="pp66-spine${bridged ? ' bridged' : ''}" title="${bridged ? 'Bridge clip — tap to remove' : 'Tap to add a bridge clip'}" onclick="event.stopPropagation();toggle66Bridge('${dev.id}',${r})"></div>${right}</div>`;
+    }
+    return `<div class="pp66-block">${rowsHtml}</div>`;
   }
 
   let rowsHtml = '';
@@ -359,25 +424,42 @@ function buildPatchPanelFaceplate(dev, p) {
   return `<div class="pp-faceplate">${rowsHtml}</div>`;
 }
 
+// Bridge clip on a 66-block row: joins the left and right terminals of
+// that row into one circuit (documentational — tap the spine to toggle)
+function toggle66Bridge(devId, row) {
+  const p = getProject();
+  const d = p.devices.find(x => x.id === devId);
+  if (!d) return;
+  if (!d.bridged66) d.bridged66 = {};
+  if (d.bridged66[row]) delete d.bridged66[row]; else d.bridged66[row] = true;
+  const on = !!d.bridged66[row];
+  logChange(`66 bridge ${on ? 'added' : 'removed'}: ${d.name} row ${row}`);
+  save(); refreshView();
+  toast(`Row ${row}: bridge clip ${on ? 'added ⌁' : 'removed'}`, 'success');
+}
+
 function buildRackHTML(rack, p) {
   const isAsc = rack.uDirection === 'asc';
   const dirLabel = isAsc ? '↑ U1 bottom' : '↓ U1 top';
+  const isWall = rack.rackType === 'wall';
   const collapsed = _rackCollapsed.has(rack.id);
   const devCount = p.devices.filter(d => d.rackId === rack.id).length;
+  const sizeLabel = isWall ? 'Wall space' : rack.uHeight + 'U';
   const headHtml = `
     <div class="rack-header">
-      <div class="rack-header-left" onclick="toggleRackCollapse('${rack.id}')" title="${collapsed ? 'Expand rack' : 'Collapse rack'}">
-        <h3><span class="rack-caret">${collapsed ? '▸' : '▾'}</span>${esc(rack.name)}</h3>
+      <div class="rack-header-left" onclick="toggleRackCollapse('${rack.id}')" title="${collapsed ? 'Expand' : 'Collapse'}">
+        <h3><span class="rack-caret">${collapsed ? '▸' : '▾'}</span>${isWall ? '▦ ' : ''}${esc(rack.name)}</h3>
         <p>${collapsed
-          ? `${rack.uHeight}U · ${devCount} device${devCount !== 1 ? 's' : ''}${rack.location ? ' · ' + esc(rack.location) : ''}`
-          : `${esc(rack.location||'No location')} · ${rack.uHeight}U · ${dirLabel}`}</p>
+          ? `${sizeLabel} · ${devCount} device${devCount !== 1 ? 's' : ''}${rack.location ? ' · ' + esc(rack.location) : ''}`
+          : `${esc(rack.location||'No location')} · ${sizeLabel}${isWall ? ` · ${devCount} device${devCount !== 1 ? 's' : ''}` : ' · ' + dirLabel}`}</p>
       </div>
       ${_rackEditMode ? `<div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="btn btn-ghost btn-sm btn-icon" onclick="editRack('${rack.id}')" title="Edit rack">✎</button>
-        <button class="btn btn-danger btn-sm btn-icon" onclick="deleteRack('${rack.id}')" title="Delete rack">✕</button>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="editRack('${rack.id}')" title="Edit">✎</button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="deleteRack('${rack.id}')" title="Delete">✕</button>
       </div>` : ''}
     </div>`;
   if (collapsed) return `<div class="rack-container rack-collapsed" id="rack-${rack.id}">${headHtml}</div>`;
+  if (isWall) return `<div class="rack-container" id="rack-${rack.id}">${headHtml}${buildWallBoardHTML(rack, p)}</div>`;
   let html = `<div class="rack-container" id="rack-${rack.id}">${headHtml}
     <div class="rack-body" oncontextmenu="return false">`;
   const uOrder = [];
@@ -426,6 +508,145 @@ function buildRackHTML(rack, p) {
 }
 
 // ═══════════════════════════════════════════
+//  WALL SPACE — a free-form mounting board.
+//  Edit mode: drag tiles to move, corner handle
+//  to resize, ✕ to unmount, drop pool chips on
+//  the board to place. View mode: tap a tile
+//  for the device editor, ⊡ chip for its ports.
+// ═══════════════════════════════════════════
+// Layout entries are % of the board: { x, y, w, h }
+function _wallEntry(rack, devId, idx) {
+  if (!rack.wallLayout) rack.wallLayout = {};
+  if (!rack.wallLayout[devId]) {
+    const col = idx % 3, row = Math.floor(idx / 3);
+    rack.wallLayout[devId] = { x: 3 + col * 32.5, y: 4 + row * 26, w: 30, h: 22 };
+  }
+  return rack.wallLayout[devId];
+}
+
+function buildWallBoardHTML(rack, p) {
+  const editing = _rackEditMode;
+  const devs = p.devices.filter(d => d.rackId === rack.id)
+    .sort((a, b) => (a.name||'').localeCompare(b.name||'', undefined, { numeric: true }));
+  const tiles = devs.map((d, i) => {
+    const e = _wallEntry(rack, d.id, i);
+    const c = dtColor(d.deviceType || 'Misc.');
+    const used = Object.keys(d.portAssignments || {}).length;
+    return `<div class="wall-tile ${editing ? 'editing' : ''}" id="walltile-${d.id}"
+      data-device-id="${d.id}" data-rack-id="${rack.id}"
+      style="left:${e.x}%;top:${e.y}%;width:${e.w}%;height:${e.h}%;--wc:${c}"
+      ${editing ? 'oncontextmenu="return false"' : `onclick="editDevice('${d.id}')"`}>
+      <div class="wt-name">${esc(d.name)}</div>
+      <div class="wt-sub">${esc(d.ip || d.deviceType || '')}</div>
+      ${(d.ports||0) > 0 ? `<div class="wt-ports" ${editing ? '' : `onclick="event.stopPropagation();state.selectedSwitch='${d.id}';setView('ports')"`}>⊡ ${used}/${d.ports}</div>` : ''}
+      ${editing ? `<button class="wt-remove" onclick="_wallRemove(event,'${rack.id}','${d.id}')" title="Remove from wall">✕</button><div class="wt-resize" title="Resize"></div>` : ''}
+    </div>`;
+  }).join('');
+  const hint = devs.length === 0
+    ? `<div class="wall-empty">${editing ? 'Drag devices here from the tray below' : '▦ Empty wall — use ✎ Edit to mount devices'}</div>` : '';
+  return `<div class="wall-board ${editing ? 'editing' : ''}" id="wallboard-${rack.id}" data-rack-id="${rack.id}"
+    style="height:${rack.wallHeight || 380}px" oncontextmenu="return false">${tiles}${hint}</div>`;
+}
+
+let _wall = null;
+
+function _wireWallTiles() {
+  document.querySelectorAll('.wall-tile.editing').forEach(el => {
+    el.addEventListener('pointerdown', (e) => _wallDown(e, el));
+  });
+}
+
+function _wallDown(e, tile) {
+  if (_wall) return;
+  if (e.target.closest && e.target.closest('.wt-remove')) return;
+  const resize = !!(e.target.closest && e.target.closest('.wt-resize'));
+  const board = tile.closest('.wall-board');
+  const p = getProject();
+  const rack = p.racks.find(r => r.id === tile.dataset.rackId);
+  if (!board || !rack) return;
+  const entry = { ...(rack.wallLayout || {})[tile.dataset.deviceId] };
+  if (entry.x === undefined) return;
+  _wall = { tile, rack, devId: tile.dataset.deviceId, resize, br: board.getBoundingClientRect(),
+    startX: e.clientX, startY: e.clientY, entry, cur: null, pointerId: e.pointerId };
+  try { tile.setPointerCapture(e.pointerId); } catch (err) {}
+  tile.addEventListener('pointermove', _wallMove);
+  tile.addEventListener('pointerup', _wallUp);
+  tile.addEventListener('pointercancel', _wallUp);
+  e.preventDefault();
+}
+
+function _wallMove(e) {
+  const w = _wall;
+  if (!w || e.pointerId !== w.pointerId) return;
+  const dx = (e.clientX - w.startX) / w.br.width * 100;
+  const dy = (e.clientY - w.startY) / w.br.height * 100;
+  let { x, y, w: ww, h } = w.entry;
+  if (w.resize) {
+    ww = Math.max(12, Math.min(100 - x, ww + dx));
+    h  = Math.max(9,  Math.min(100 - y, h + dy));
+    w.tile.style.width = ww + '%';
+    w.tile.style.height = h + '%';
+  } else {
+    x = Math.max(0, Math.min(100 - ww, x + dx));
+    y = Math.max(0, Math.min(100 - h, y + dy));
+    w.tile.style.left = x + '%';
+    w.tile.style.top = y + '%';
+  }
+  w.cur = { x, y, w: ww, h };
+  e.preventDefault();
+}
+
+function _wallUp(e) {
+  const w = _wall;
+  if (!w || (e.pointerId !== undefined && e.pointerId !== w.pointerId)) return;
+  _wall = null;
+  w.tile.removeEventListener('pointermove', _wallMove);
+  w.tile.removeEventListener('pointerup', _wallUp);
+  w.tile.removeEventListener('pointercancel', _wallUp);
+  try { w.tile.releasePointerCapture(w.pointerId); } catch (err) {}
+  if (w.cur) {
+    if (!w.rack.wallLayout) w.rack.wallLayout = {};
+    w.rack.wallLayout[w.devId] = { x: +w.cur.x.toFixed(1), y: +w.cur.y.toFixed(1), w: +w.cur.w.toFixed(1), h: +w.cur.h.toFixed(1) };
+    save();
+  }
+}
+
+function _wallRemove(e, rackId, devId) {
+  e.stopPropagation();
+  const p = getProject();
+  const dev = p.devices.find(d => d.id === devId);
+  const rack = p.racks.find(r => r.id === rackId);
+  if (dev) {
+    logChange(`Wall removed: ${dev.name} from ${rack ? rack.name : 'wall'}`);
+    dev.rackId = null; dev.rackU = null;
+  }
+  if (rack && rack.wallLayout) delete rack.wallLayout[devId];
+  save(); renderRacks();
+}
+
+// Any device type can hang on a wall board (modems, ONTs, cameras, 66 blocks…)
+function _placeDeviceWall(deviceId, rackId, xPct, yPct) {
+  const p = getProject();
+  const dev = p.devices.find(d => d.id === deviceId);
+  const rack = p.racks.find(r => r.id === rackId);
+  if (!dev || !rack) return false;
+  const prev = (rack.wallLayout || {})[deviceId];
+  const w = prev?.w || 30, h = prev?.h || 22;
+  if (!rack.wallLayout) rack.wallLayout = {};
+  rack.wallLayout[deviceId] = {
+    x: +Math.max(0, Math.min(100 - w, (xPct ?? 5) - w / 2)).toFixed(1),
+    y: +Math.max(0, Math.min(100 - h, (yPct ?? 5) - h / 2)).toFixed(1),
+    w, h
+  };
+  if (dev.rackId !== rackId) logChange(`Wall placed: ${dev.name} → ${rack.name}`);
+  dev.rackId = rackId;
+  dev.rackU = null;
+  save(); renderRacks();
+  toast(`${dev.name} → ${rack.name}`, 'success');
+  return true;
+}
+
+// ═══════════════════════════════════════════
 //  TOUCH + MOUSE DRAG-AND-DROP ENGINE
 //  Pool chip: drag vertically to lift, tap for picker.
 //  Placed device: drag its name to move; tap to edit.
@@ -441,8 +662,20 @@ function _dndDown(e, deviceId, fromRackId, srcEl, isPool) {
     startX: e.clientX, startY: e.clientY,
     lastX: e.clientX, lastY: e.clientY,
     started: false, pointerId: e.pointerId,
-    downTime: Date.now(), curSlot: null, overDock: false, raf: null
+    downTime: Date.now(), curSlot: null, overDock: false, raf: null,
+    armed: false, holdTimer: null
   };
+  // Tray chips need a ~0.4s hold before they can be lifted — otherwise
+  // scrolling the tray keeps picking devices up
+  if (isPool && e.pointerType !== 'mouse') {
+    _dnd.holdTimer = setTimeout(() => {
+      if (_dnd && !_dnd.started && !_dnd.scrollMode) {
+        _dnd.armed = true;
+        srcEl.classList.add('armed');
+        if (navigator.vibrate) { try { navigator.vibrate(18); } catch(err) {} }
+      }
+    }, 400);
+  }
   srcEl.addEventListener('pointermove', _dndMove);
   srcEl.addEventListener('pointerup', _dndUp);
   srcEl.addEventListener('pointercancel', _dndCancel);
@@ -455,11 +688,27 @@ function _dndMove(e) {
   _dnd.lastX = e.clientX; _dnd.lastY = e.clientY;
 
   if (!_dnd.started) {
+    // Downward drag in the wrapped tray scrolls it manually (chips are
+    // touch-action:none so the browser never pans natively)
+    if (_dnd.scrollMode) {
+      const strip = document.getElementById('pool-strip');
+      if (strip) strip.scrollTop -= (e.clientY - _dnd.lastScrollY);
+      _dnd.lastScrollY = e.clientY;
+      return;
+    }
     const dist = Math.hypot(dx, dy);
     if (_dnd.isPool && e.pointerType !== 'mouse') {
-      // In the horizontal pool strip: sideways = native scroll, upward = start drag
-      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) { _dndCancel(e); return; }
-      if (dist > 12 && Math.abs(dy) > Math.abs(dx)) _dndStart(e);
+      // Hold ~0.4s to arm the chip, then move to lift it. Any movement
+      // before the hold completes scrolls the tray instead.
+      if (_dnd.armed) {
+        if (dist > 4) _dndStart(e);
+        return;
+      }
+      if (dist > 10) {
+        clearTimeout(_dnd.holdTimer);
+        _dnd.scrollMode = true;
+        _dnd.lastScrollY = e.clientY;
+      }
     } else {
       if (dist > 7) _dndStart(e);
     }
@@ -497,10 +746,14 @@ function _dndTrack(x, y) {
   // Hit-test what's under the finger
   const el = document.elementFromPoint(x, y);
   const slot = el ? el.closest('.rack-slot') : null;
+  const wall = el ? el.closest('.wall-board') : null;
   const dock = el ? el.closest('#pool-dock') : null;
   if (_dnd.curSlot && _dnd.curSlot !== slot) _dnd.curSlot.classList.remove('drag-over');
   if (slot && slot !== _dnd.curSlot) slot.classList.add('drag-over');
   _dnd.curSlot = slot || null;
+  if (_dnd.curWall && _dnd.curWall !== wall) _dnd.curWall.classList.remove('drag-over');
+  if (wall && wall !== _dnd.curWall) wall.classList.add('drag-over');
+  _dnd.curWall = wall || null;
   _dnd.overDock = !!dock && !!_dnd.fromRackId;
   const dockEl = document.getElementById('pool-dock');
   if (dockEl) dockEl.style.boxShadow = _dnd.overDock ? 'inset 0 0 0 2px var(--accent)' : '';
@@ -526,6 +779,7 @@ function _dndUp(e) {
   const d = _dnd;
   _dndTeardown();
   if (!d.started) {
+    if (d.scrollMode || d.armed) return; // tray scroll, or an aborted hold — not a tap
     // Treated as a tap
     if (d.isPool) assignPoolDeviceModal(d.deviceId);
     else editDevice(d.deviceId);
@@ -534,6 +788,10 @@ function _dndUp(e) {
   if (d.curSlot) {
     const m = d.curSlot.id.match(/^slot-(.+)-(\d+)$/);
     if (m) _placeDevice(d.deviceId, m[1], parseInt(m[2]));
+  } else if (d.curWall) {
+    const br = d.curWall.getBoundingClientRect();
+    _placeDeviceWall(d.deviceId, d.curWall.dataset.rackId,
+      (d.lastX - br.left) / br.width * 100, (d.lastY - br.top) / br.height * 100);
   } else if (d.overDock && d.fromRackId) {
     // Dragged down to the dock → remove from rack
     const p = getProject();
@@ -557,9 +815,12 @@ function _dndTeardown() {
   if (!_dnd) return;
   const d = _dnd;
   _dnd = null;
+  clearTimeout(d.holdTimer);
+  d.srcEl.classList.remove('armed');
   if (d.raf) cancelAnimationFrame(d.raf);
   if (d.ghost) d.ghost.remove();
   if (d.curSlot) d.curSlot.classList.remove('drag-over');
+  if (d.curWall) d.curWall.classList.remove('drag-over');
   const dockEl = document.getElementById('pool-dock');
   if (dockEl) dockEl.style.boxShadow = '';
   d.srcEl.classList.remove('dragging');
@@ -716,7 +977,7 @@ function assignPoolDeviceModal(deviceId) {
   const dev = p.devices.find(d => d.id === deviceId);
   if (!dev) return;
   if (p.racks.length === 0) return toast('Create a rack first', 'error');
-  const rackOpts = p.racks.map(r => `<option value="${r.id}">${esc(r.name)} (${r.uHeight}U)</option>`).join('');
+  const rackOpts = p.racks.map(r => `<option value="${r.id}">${esc(r.name)} ${r.rackType === 'wall' ? '(Wall)' : `(${r.uHeight}U)`}</option>`).join('');
   openModal(`
     <h3>Place "${esc(dev.name)}"</h3>
     <p style="color:var(--text3);font-size:12px;margin-bottom:12px">Tip: you can also drag the chip straight into a rack slot.</p>
@@ -742,6 +1003,10 @@ function updatePoolSlotOptions() {
   if (!rack) return;
   const sel = document.getElementById('apm-u');
   if (!sel) return;
+  if (rack.rackType === 'wall') {
+    sel.innerHTML = '<option value="wall">▦ Anywhere on the board</option>';
+    return;
+  }
   let opts = '';
   for (let u = 1; u <= rack.uHeight; u++) {
     const occupied = p.devices.some(d => d.rackId === rackId && d.rackU && d.rackU <= u && u < d.rackU + (d.deviceUHeight || 1));
@@ -751,7 +1016,14 @@ function updatePoolSlotOptions() {
 }
 
 function savePoolAssign(deviceId) {
+  const p = getProject();
   const rackId = document.getElementById('apm-rack')?.value;
+  const rack = p.racks.find(r => r.id === rackId);
+  if (rack && rack.rackType === 'wall') {
+    closeModal();
+    _placeDeviceWall(deviceId, rackId, 18, 15);
+    return;
+  }
   const u = parseInt(document.getElementById('apm-u')?.value);
   if (!rackId || !u) return toast('Select a rack and slot', 'error');
   closeModal();
@@ -767,20 +1039,34 @@ function openRackModal(id) {
   const r = id ? p.racks.find(x => x.id === id) : null;
   const isNew = !r;
   const curDir = r?.uDirection || 'desc';
+  const isWall = r?.rackType === 'wall';
   openModal(`
-    <h3>${isNew ? 'New Rack' : 'Edit Rack'}</h3>
-    <div class="form-row"><label>Rack Name *</label>
+    <h3>${isNew ? 'New Rack / Wall' : isWall ? 'Edit Wall Space' : 'Edit Rack'}</h3>
+    <div class="form-row"><label>Name *</label>
       <input class="form-control" id="r-name" value="${esc(r?.name||'')}" placeholder="e.g. MDF Rack 1"></div>
+    <div class="form-row"><label>Type${isNew ? '' : ' <span style="color:var(--text3)">(fixed after creation)</span>'}</label>
+      <select class="form-control" id="r-type" onchange="_rackTypeChanged()" ${isNew ? '' : 'disabled'}>
+        <option value="rack" ${!isWall?'selected':''}>▤ Standard Rack (U slots)</option>
+        <option value="wall" ${isWall?'selected':''}>▦ Wall Space (mount board)</option>
+      </select>
+    </div>
     <div class="form-row-inline">
-      <div class="form-row"><label>U Height</label>
+      <div class="form-row" id="r-height-row" style="${isWall?'display:none':''}"><label>U Height</label>
         <input class="form-control" id="r-height" type="number" min="4" max="56" value="${r?.uHeight||42}" inputmode="numeric"></div>
       <div class="form-row"><label>Location</label>
         <input class="form-control" id="r-loc" value="${esc(r?.location||'')}" placeholder="Server Room A"></div>
     </div>
-    <div class="form-row"><label>U Numbering</label>
+    <div class="form-row" id="r-udir-row" style="${isWall?'display:none':''}"><label>U Numbering</label>
       <select class="form-control" id="r-udir">
         <option value="desc" ${curDir==='desc'?'selected':''}>U1 at top (descending)</option>
         <option value="asc" ${curDir==='asc'?'selected':''}>U1 at bottom (ascending)</option>
+      </select>
+    </div>
+    <div class="form-row" id="r-wallh-row" style="${isWall?'':'display:none'}"><label>Board Size</label>
+      <select class="form-control" id="r-wallh">
+        <option value="260" ${r?.wallHeight===260?'selected':''}>Small</option>
+        <option value="380" ${!r?.wallHeight||r?.wallHeight===380?'selected':''}>Medium</option>
+        <option value="540" ${r?.wallHeight===540?'selected':''}>Large</option>
       </select>
     </div>
     <div class="modal-actions">
@@ -790,20 +1076,38 @@ function openRackModal(id) {
   setTimeout(() => document.getElementById('r-name')?.focus(), 50);
 }
 
+function _rackTypeChanged() {
+  const wall = document.getElementById('r-type')?.value === 'wall';
+  const show = (rid, on) => { const el = document.getElementById(rid); if (el) el.style.display = on ? '' : 'none'; };
+  show('r-height-row', !wall);
+  show('r-udir-row', !wall);
+  show('r-wallh-row', wall);
+}
+
 function saveRack(id) {
   const p = getProject();
   const name = document.getElementById('r-name')?.value?.trim();
   if (!name) return toast('Rack name is required', 'error');
-  const uDirection = document.getElementById('r-udir')?.value || 'desc';
-  const data = { name, uHeight: parseInt(document.getElementById('r-height')?.value)||42, location: document.getElementById('r-loc')?.value?.trim()||'', uDirection };
+  const existing = id ? p.racks.find(r => r.id === id) : null;
+  const isWall = existing ? existing.rackType === 'wall' : document.getElementById('r-type')?.value === 'wall';
+  const data = { name, location: document.getElementById('r-loc')?.value?.trim()||'' };
+  if (isWall) {
+    data.wallHeight = parseInt(document.getElementById('r-wallh')?.value) || 380;
+  } else {
+    data.uHeight = parseInt(document.getElementById('r-height')?.value)||42;
+    data.uDirection = document.getElementById('r-udir')?.value || 'desc';
+  }
   if (id) {
     const idx = p.racks.findIndex(r => r.id === id);
-    if (idx >= 0) { Object.assign(p.racks[idx], data); logChange(`Rack updated: ${name}`); }
+    if (idx >= 0) { Object.assign(p.racks[idx], data); logChange(`${isWall ? 'Wall space' : 'Rack'} updated: ${name}`); }
   } else {
-    p.racks.push({ id: genId(), ...data });
-    logChange(`Rack created: ${name} (${data.uHeight}U, ${data.location||'no location'})`);
+    p.racks.push(isWall
+      ? { id: genId(), rackType: 'wall', wallLayout: {}, uHeight: 0, uDirection: 'desc', ...data }
+      : { id: genId(), rackType: 'rack', ...data });
+    logChange(isWall ? `Wall space created: ${name}${data.location ? ' (' + data.location + ')' : ''}`
+                     : `Rack created: ${name} (${data.uHeight}U, ${data.location||'no location'})`);
   }
-  save(); closeModal(); renderRacks(); toast(id ? 'Rack updated' : 'Rack created', 'success');
+  save(); closeModal(); renderRacks(); toast(id ? 'Saved' : (isWall ? 'Wall space created' : 'Rack created'), 'success');
 }
 
 function deleteRack(id) {
@@ -947,7 +1251,9 @@ function renderPorts() {
         </div>
         <button class="btn btn-ghost btn-sm" onclick="clearAllPorts('${sw.id}')">Clear All</button>
       </div>
-      <div class="port-grid">${cells.join('')}</div>
+      ${PANEL_LIKE(sw.deviceType || '') && sw.panelStyle === '66'
+        ? `<div style="max-width:560px">${buildPatchPanelFaceplate(sw, p)}</div>`
+        : `<div class="port-grid">${cells.join('')}</div>`}
       ${usedVlans.length > 0 ? `<div class="chip-row" style="margin-top:12px">
         ${usedVlans.map(v => { const vc = getVlanColor(v); return `<span class="filter-tab" style="border-color:${vc};color:${vc};pointer-events:none">VLAN ${v}</span>`; }).join('')}
       </div>` : ''}`;

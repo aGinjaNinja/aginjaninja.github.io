@@ -281,6 +281,7 @@ function addPatchPanel() {
           <option value="24" selected>24 ports</option>
           <option value="48">48 ports</option>
           <option value="96">96 ports</option>
+          <option value="100">100 terminals (50-row 66 block)</option>
         </select>
       </div>
       <div class="form-row"><label>U Height</label>
@@ -290,6 +291,11 @@ function addPatchPanel() {
         </select>
       </div>
     </div>
+    <div class="form-row"><label>Layout</label>
+      <select class="form-control" id="pp-layout" onchange="_ppLayoutChanged()">
+        <option value="">▭ Horizontal rows (rack faceplate)</option>
+        <option value="66">▯ Vertical 66-block (wall punch-down)</option>
+      </select></div>
     <div class="form-row"><label>Model <span style="color:var(--text3)">(optional)</span></label>
       <input class="form-control" id="pp-model" placeholder="e.g. Leviton 5G702-U48"></div>
     <div class="form-row"><label>Notes <span style="color:var(--text3)">(optional)</span></label>
@@ -301,6 +307,14 @@ function addPatchPanel() {
   setTimeout(() => document.getElementById('pp-name')?.focus(), 50);
 }
 
+// Picking the 66-block layout defaults the count to a standard 50-row block
+// (100 terminals — each side of a row is one port, drawn with two clips)
+function _ppLayoutChanged() {
+  const is66 = document.getElementById('pp-layout')?.value === '66';
+  const ps = document.getElementById('pp-ports');
+  if (ps) ps.value = is66 ? '100' : '24';
+}
+
 function savePatchPanel() {
   const p = getProject();
   const name  = document.getElementById('pp-name')?.value?.trim();
@@ -308,11 +322,12 @@ function savePatchPanel() {
   const uheight = parseInt(document.getElementById('pp-uheight')?.value) || 1;
   const model  = document.getElementById('pp-model')?.value?.trim() || '';
   const notes  = document.getElementById('pp-notes')?.value?.trim() || '';
+  const panelStyle = document.getElementById('pp-layout')?.value || '';
   if (!name) return toast('Enter a panel name', 'error');
   const dev = {
     id: genId(), name, deviceType: 'Patch Panel',
     type: 'non-switching', ip: '', mac: '', manufacturer: '', model, notes,
-    ports, deviceUHeight: uheight,
+    ports, deviceUHeight: uheight, panelStyle,
     rackId: null, rackU: null,
     portAssignments: {}, portNotes: {}, portVlans: {}, portPeerPort: {}, portPoe: {}, portLabels: {},
     addedDate: new Date().toISOString()
@@ -388,6 +403,13 @@ function openDeviceModal(id) {
         <input class="form-control" id="d-uheight" type="number" min="1" max="16" value="${d?.deviceUHeight||1}" inputmode="numeric">
       </div>
     </div>
+    <div class="form-row" id="layout-field" style="${PANEL_LIKE(curType)?'':'display:none'}">
+      <label>Faceplate Layout</label>
+      <select class="form-control" id="d-layout">
+        <option value="" ${!d?.panelStyle?'selected':''}>▭ Horizontal rows (rack faceplate)</option>
+        <option value="66" ${d?.panelStyle==='66'?'selected':''}>▯ Vertical 66-block (wall punch-down)</option>
+      </select>
+    </div>
     <div class="form-row"><label>Notes</label>
       <textarea class="form-control" id="d-notes" placeholder="Optional notes" rows="3" style="resize:vertical;font-family:inherit">${esc(d?.notes||'')}</textarea></div>
     ${!isNew ? `
@@ -415,8 +437,10 @@ function onDevTypeChange() {
   const t = document.getElementById('d-devtype')?.value;
   const pf = document.getElementById('ports-field');
   const uf = document.getElementById('uheight-field');
+  const lf = document.getElementById('layout-field');
   if (pf) pf.style.display = PORT_CAPABLE.has(t) ? '' : 'none';
   if (uf) uf.style.display = RACK_MOUNTABLE.has(t) ? '' : 'none';
+  if (lf) lf.style.display = PANEL_LIKE(t) ? '' : 'none';
 }
 
 function saveDevice(id) {
@@ -453,6 +477,7 @@ function saveDevice(id) {
     manufacturer: document.getElementById('d-mfr')?.value?.trim() || '',
     model: document.getElementById('d-model')?.value?.trim() || '',
     ports: hasPorts ? (Number.isFinite(portsVal) && portsVal >= 0 ? portsVal : (oldDev ? oldDev.ports || 0 : 24)) : 0,
+    panelStyle: PANEL_LIKE(deviceType) ? (document.getElementById('d-layout')?.value ?? (oldDev?.panelStyle || '')) : '',
     notes: document.getElementById('d-notes')?.value?.trim() || '',
     deviceUHeight,
     status: document.getElementById('d-status')?.value || ''
@@ -472,6 +497,7 @@ function saveDevice(id) {
       if ((old.notes||'') !== data.notes) changes.push(`notes changed`);
       if ((old.deviceUHeight||1) !== (data.deviceUHeight||1)) changes.push(`U-height: ${old.deviceUHeight||1}U → ${data.deviceUHeight||1}U`);
       if ((old.status||'') !== data.status) changes.push(`status changed`);
+      if ((old.panelStyle||'') !== (data.panelStyle||'')) changes.push(`faceplate layout changed`);
       Object.assign(p.devices[idx], data);
       // A dismiss with nothing edited shouldn't spam the changelog or toast
       if (changes.length) logChange(`Device updated: ${name} — ${changes.join('; ')}`);

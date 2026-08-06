@@ -119,6 +119,7 @@ function migrateDevice(d) {
   if (!d.portEndDevice) d.portEndDevice = {};
   if (!d.portFiber) d.portFiber = {};
   if (!d.portTypeOverride) d.portTypeOverride = {};
+  if (!d.bridged66) d.bridged66 = {};   // 66-block bridge clips, keyed by row
   if (!d.ipHistory) d.ipHistory = [];
   if (d.parentDeviceId === undefined) d.parentDeviceId = null;
   if (!d.deviceUHeight) d.deviceUHeight = 1;
@@ -149,6 +150,11 @@ let state = {
 function migrateProject(p) {
   if (!p.devices) p.devices = [];
   if (!p.racks) p.racks = [];
+  // Racks are either standard U-slot racks or free-form wall spaces
+  p.racks.forEach(r => {
+    if (!r.rackType) r.rackType = 'rack';
+    if (r.rackType === 'wall' && !r.wallLayout) r.wallLayout = {};
+  });
   if (!p.changelog) p.changelog = [];
   if (!p.siteNotes) p.siteNotes = [];
   if (!p.company) p.company = '';
