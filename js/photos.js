@@ -1082,19 +1082,13 @@ async function downloadOriginalPhoto(idx) {
   const ext = _mimeToExt(mime);
   let name = (ph.caption || ph.name || 'photo').replace(/[<>:"/\\|?*]/g, '_');
   if (!/\.\w+$/.test(name)) name += ext;
-  _triggerPhotoDownload(data, name);
-  toast('Photo downloaded', 'success');
-}
-
-function _triggerPhotoDownload(urlOrData, filename, isObjectUrl) {
-  const a = document.createElement('a');
-  a.href = urlOrData;
-  a.download = filename;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  if (isObjectUrl) setTimeout(() => URL.revokeObjectURL(urlOrData), 5000);
+  try {
+    const res = await saveBlobToDevice(_dataUrlToBlob(data), name);
+    if (res.method !== 'native' && res.method !== 'cancelled') toast('Photo downloaded', 'success');
+  } catch (err) {
+    console.error('Photo download error:', err);
+    toast('Download failed: ' + err.message, 'error');
+  }
 }
 
 async function downloadPhotosAsZip() {
@@ -1137,15 +1131,9 @@ async function downloadPhotosAsZip() {
 
   try {
     const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = (p.name || 'photos').replace(/\s+/g, '_') + '_photos.zip';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    toast(`Downloaded ${count} photo${count > 1 ? 's' : ''} as ZIP`, 'success');
+    const res = await saveBlobToDevice(blob, (p.name || 'photos').replace(/\s+/g, '_') + '_photos.zip');
+    if (res.method === 'cancelled') return;
+    if (res.method !== 'native') toast(`Downloaded ${count} photo${count > 1 ? 's' : ''} as ZIP`, 'success');
   } catch (err) {
     console.error('ZIP generation error:', err);
     toast('Failed to generate ZIP: ' + err.message, 'error');

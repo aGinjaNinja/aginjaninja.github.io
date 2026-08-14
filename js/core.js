@@ -500,9 +500,155 @@ async function _ensureJSZip() {
   });
 }
 
+// ─── File saving ───
+// The Android WebView has no download manager: an <a download href="blob:…">
+// click is silently dropped and navigator.share is undefined, so every export
+// path goes through saveBlobToDevice() instead of building its own anchor.
+
+function _progressModal(title, detail) {
+  openModal(`
+    <h3 style="margin-bottom:12px">${title}</h3>
+    <p id="save-prog-detail" style="font-size:13px;color:var(--text2);margin-bottom:10px">${detail}</p>
+    <div style="background:var(--card2);border:1px solid var(--border2);border-radius:6px;height:22px;overflow:hidden">
+      <div id="save-prog-bar" style="height:100%;width:0%;background:var(--accent);border-radius:6px;transition:width .2s ease"></div>
+    </div>
+    <p id="save-prog-pct" style="text-align:center;font-size:12px;color:var(--text3);margin-top:6px;font-family:var(--mono)">0%</p>
+  `);
+}
+
+function _progressUpdate(pct, detail) {
+  const bar = document.getElementById('save-prog-bar');
+  const pctEl = document.getElementById('save-prog-pct');
+  const detailEl = document.getElementById('save-prog-detail');
+  if (bar) bar.style.width = pct + '%';
+  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+  if (detail && detailEl) detailEl.textContent = detail;
+}
+
+function _fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+  return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+function _sliceToBase64(slice) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    // readAsDataURL yields "data:<mime>;base64,<payload>" — the native side
+    // decodes each slice on its own, so only the payload crosses the bridge.
+    r.onload = () => resolve(r.result.slice(r.result.indexOf(',') + 1));
+    r.onerror = () => reject(new Error('Could not read the file data'));
+    r.readAsDataURL(slice);
+  });
+}
+
+// Streams a blob to the native bridge in slices. 384 KB of binary becomes
+// 512 KB of base64 per call — small enough for the JS↔native channel, big
+// enough that a 200 MB export is a few hundred calls rather than thousands.
+async function _nativeSaveBlob(blob, filename, onProgress) {
+  const B = window.AndroidSave;
+  const mime = blob.type || 'application/octet-stream';
+  const err = B.begin(filename, mime);
+  if (err) throw new Error(err);
+
+  const CHUNK = 384 * 1024;
+  try {
+    for (let off = 0; off < blob.size; off += CHUNK) {
+      const end = Math.min(off + CHUNK, blob.size);
+      const b64 = await _sliceToBase64(blob.slice(off, end));
+      const cerr = B.chunk(b64);
+      if (cerr) throw new Error(cerr);
+      if (onProgress) onProgress(end, blob.size);
+      // Yield so the progress bar can actually paint between slices.
+      if ((off / CHUNK) % 8 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+  } catch (e) {
+    try { B.abort(); } catch (_) {}
+    throw e;
+  }
+
+  let res;
+  try { res = JSON.parse(B.end() || '{}'); } catch (_) { res = {}; }
+  if (!res.ok) throw new Error(res.error || 'The file could not be saved');
+  return res;
+}
+
+// Saves a blob wherever this platform can: native Downloads folder in the
+// Android app, the share sheet on a mobile browser, a normal download on
+// desktop. Returns a description of where it landed.
+async function saveBlobToDevice(blob, filename, opts) {
+  const big = blob.size > 4 * 1024 * 1024;
+
+  if (window.AndroidSave) {
+    if (big) _progressModal('💾 Saving File', `Writing ${esc(filename)} (${_fmtBytes(blob.size)})…`);
+    try {
+      const res = await _nativeSaveBlob(blob, filename, (done, total) => {
+        if (big) _progressUpdate(done / total * 100, `${_fmtBytes(done)} of ${_fmtBytes(total)}`);
+      });
+      if (big) closeModal();
+      _savedFileModal(res, blob.type);
+      return { method: 'native', ...res };
+    } catch (e) {
+      if (big) closeModal();
+      throw e;
+    }
+  }
+
+  // Mobile browsers only: the share sheet is their one route to a real file
+  // manager. On desktop it exists too, but a plain download is what's wanted.
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isMobile && !opts?.noShare && navigator.canShare) {
+    try {
+      const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return { method: 'share' };
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') return { method: 'cancelled' };
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return { method: 'download' };
+}
+
+function _savedFileModal(res, mime) {
+  const uri = res.uri || '';
+  openModal(`
+    <h3 style="margin-bottom:12px">✓ File Saved</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:4px">
+      <b>${esc(res.name || '')}</b>
+    </p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:18px;font-family:var(--mono)">
+      ${esc(res.where || 'Downloads')} · ${_fmtBytes(res.bytes || 0)}
+    </p>
+    <div class="modal-actions" style="gap:10px">
+      ${uri ? `<button class="btn btn-ghost btn-sm"
+         onclick="_shareSavedFile(${JSON.stringify(uri).replace(/"/g, '&quot;')},${JSON.stringify(mime || '').replace(/"/g, '&quot;')})">⤴ Share</button>` : ''}
+      <button class="btn btn-primary btn-sm" onclick="closeModal()">Done</button>
+    </div>
+  `);
+}
+
+function _shareSavedFile(uri, mime) {
+  const err = window.AndroidSave?.share(uri, mime || 'application/octet-stream');
+  if (err) toast('Share failed: ' + err, 'error');
+  else closeModal();
+}
+
 // Build project export as a ZIP: project.json (metadata) + individual media files.
 // Exports ALL media (photos, legacy site-map floors, legacy cable maps) so nothing is lost.
-async function _buildProjectZip(p) {
+async function _buildProjectZip(p, onProgress) {
   await _ensureJSZip();
   const zip = new JSZip();
 
@@ -545,63 +691,29 @@ async function _buildProjectZip(p) {
     if (crData) zip.file('media/cablemap_' + m.id, crData);
   }
 
-  return zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({ type: 'blob' },
+    onProgress ? (meta) => onProgress(meta.percent) : undefined);
 }
 
 async function globalSave() {
  try {
   save();
   const p = getProject();
-  if (p) {
-    const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.zip`;
-    const blob = await _buildProjectZip(p);
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!p) return;
 
-    if (isMobile) {
-      // Mobile: try Web Share API first, then show a tappable download modal
-      const file = new File([blob], defaultName, { type: 'application/zip' });
-      let shared = false;
-      try {
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: p.name });
-          shared = true;
-          logChange('Project exported (Share)');
-        }
-      } catch (e) {
-        if (e.name === 'AbortError') return;
-      }
-      if (!shared) {
-        const url = URL.createObjectURL(blob);
-        openModal(`
-          <h3>Save Project File</h3>
-          <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
-            Tap the button below to download your project file.
-          </p>
-          <div class="modal-actions" style="flex-direction:column;gap:10px">
-            <a href="${url}" download="${esc(defaultName)}"
-               style="display:block;text-align:center;padding:12px 20px;background:var(--accent);color:#000;border-radius:6px;font-weight:600;text-decoration:none;font-size:14px"
-               onclick="setTimeout(()=>{URL.revokeObjectURL('${url}');closeModal()},500)">
-              Download ${esc(defaultName)}
-            </a>
-            <button class="btn btn-ghost btn-sm" onclick="URL.revokeObjectURL('${url}');closeModal()">Cancel</button>
-          </div>
-        `);
-        logChange('Project exported (Save button)');
-      }
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = defaultName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 300000);
-      logChange('Project exported (Save button)');
-    }
+  const defaultName = `${p.name.replace(/\s+/g, '_')}_netrack.zip`;
+  _progressModal('💾 Export Project', `Packing "${esc(p.name)}"…`);
+  let blob;
+  try {
+    blob = await _buildProjectZip(p, pct => _progressUpdate(pct, 'Compressing photos and data…'));
+  } finally {
+    closeModal();
   }
 
-  toast('Project exported', 'success');
+  const res = await saveBlobToDevice(blob, defaultName);
+  if (res.method === 'cancelled') return;
+  logChange('Project exported (' + (res.method === 'share' ? 'Share' : 'Save button') + ')');
+  if (res.method !== 'native') toast('Project exported', 'success');
  } catch (err) {
   console.error('globalSave error:', err);
   toast('Save failed: ' + err.message, 'error');
@@ -1066,16 +1178,18 @@ function toast(msg, type) {
 async function exportData() {
   try {
     const p = getProject();
-    const blob = await _buildProjectZip(p);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${p.name.replace(/\s+/g,'_')}_netrack.zip`;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 300000);
+    if (!p) return toast('No project open', 'error');
+    _progressModal('⇩ Export ZIP', `Packing "${esc(p.name)}"…`);
+    let blob;
+    try {
+      blob = await _buildProjectZip(p, pct => _progressUpdate(pct, 'Compressing photos and data…'));
+    } finally {
+      closeModal();
+    }
+    const res = await saveBlobToDevice(blob, `${p.name.replace(/\s+/g,'_')}_netrack.zip`);
+    if (res.method === 'cancelled') return;
     logChange('Project exported manually');
-    toast('Project exported', 'success');
+    if (res.method !== 'native') toast('Project exported', 'success');
   } catch (err) {
     console.error('Export error:', err);
     toast('Export failed: ' + err.message, 'error');
