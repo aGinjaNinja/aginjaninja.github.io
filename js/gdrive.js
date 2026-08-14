@@ -8,6 +8,9 @@ const GDRIVE_FOLDER_NAME = 'NetRackManager';
 let _driveTokenClient = null;
 let _driveToken       = null;
 let _driveCallback    = null;
+// Two saves running at once each create their own copy of the same file —
+// Drive allows duplicate names — so only one write may be in flight.
+let _driveWriteBusy   = false;
 
 // Pick up token from manual OAuth redirect flow (Capacitor/WebView fallback)
 (function _checkManualToken() {
@@ -127,9 +130,9 @@ async function _driveErrorMessage(resp) {
 
 async function _getOrCreateDriveFolder() {
   const q = encodeURIComponent(`name='${GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,createdTime)`);
   const d = await r.json();
-  if (d.files?.length) return d.files[0].id;
+  if (d.files?.length) return _dedupeDriveMatches(d.files);
   const cr = await _driveFetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -157,11 +160,31 @@ function _blobToDataUrl(blob) {
   });
 }
 
+// Drive happily stores two files with the same name, so a "search then create"
+// that ran twice at once left duplicates behind. Keep the oldest match, trash
+// the rest, and return the survivor.
+async function _dedupeDriveMatches(files) {
+  if (!files || files.length < 2) return files?.[0]?.id || null;
+  const sorted = [...files].sort((a, b) =>
+    String(a.createdTime || '').localeCompare(String(b.createdTime || '')));
+  // Trash rather than delete: this is backup data, and a wrong guess here
+  // should be recoverable from the Drive bin rather than gone for good.
+  for (const extra of sorted.slice(1)) {
+    try {
+      await _driveFetch(`https://www.googleapis.com/drive/v3/files/${extra.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trashed: true })
+      });
+    } catch (e) { console.warn('[Drive] Could not trash duplicate:', extra.id, e.message); }
+  }
+  return sorted[0].id;
+}
+
 async function _getOrCreateSubFolder(parentId, name) {
   const q = encodeURIComponent(`name='${name}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,createdTime)`);
   const { files } = await r.json();
-  if (files?.length) return files[0].id;
+  if (files?.length) return _dedupeDriveMatches(files);
   const cr = await _driveFetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -172,7 +195,7 @@ async function _getOrCreateSubFolder(parentId, name) {
 
 async function _listDriveFolder(parentId) {
   const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
-  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,size)&pageSize=1000`);
+  const r = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,size,createdTime)&pageSize=1000`);
   const { files } = await r.json();
   return files || [];
 }
@@ -198,18 +221,19 @@ async function _driveUploadBlob(parentId, fileName, blob, existingFileId) {
 // Write (create or update) a JSON file by name inside a Drive folder
 async function _driveWriteJson(folderId, fileName, content, description) {
   const q = encodeURIComponent(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
-  const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const search = await _driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,createdTime)`);
   const { files } = await search.json();
   if (files?.length) {
-    await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=media`, {
+    const id = await _dedupeDriveMatches(files);
+    await _driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content
     });
     if (description) {
-      await _driveFetch(`https://www.googleapis.com/drive/v3/files/${files[0].id}`, {
+      await _driveFetch(`https://www.googleapis.com/drive/v3/files/${id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description })
       });
     }
-    return files[0].id;
+    return id;
   }
   const boundary = 'nrm' + Date.now();
   const meta = JSON.stringify({ name: fileName, parents: [folderId], mimeType: 'application/json', ...(description ? { description } : {}) });
@@ -330,18 +354,51 @@ async function _verifyDriveSave(p, folderId, mediaFolderId) {
 // Uploads new/changed media (photos + legacy site-map/cable-map images) to the
 // project's *_media folder, deletes Drive files for locally-removed media, and
 // updates the drive map. Returns { mediaFolderId, changed }.
-// Returns the set of file ids inside a Drive folder, or null if that folder is
-// gone (deleted, trashed, or owned by a Google account we are no longer using).
-async function _driveFolderFileIds(folderId) {
+// Returns the files inside a Drive folder, or null if that folder is gone
+// (deleted, trashed, or owned by a Google account we are no longer using).
+async function _driveFolderFiles(folderId) {
   try {
     const r = await _driveFetch(
       `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,trashed`);
     if ((await r.json()).trashed) return null;
-    const files = await _listDriveFolder(folderId);
-    return new Set(files.map(f => f.id));
+    return await _listDriveFolder(folderId);
   } catch (e) {
     return null;
   }
+}
+
+// Returns the set of surviving file ids in a folder, or null if it is gone.
+async function _driveFolderFileIds(folderId) {
+  const files = await _driveFolderFiles(folderId);
+  return files ? new Set(files.map(f => f.id)) : null;
+}
+
+// Drive lets two files share a name, so saves that once overlapped left every
+// photo stored twice. Keep one copy of each name — preferring the one the
+// drive map already points at, so nothing needs re-uploading — and trash the
+// rest. Returns the surviving ids.
+async function _dedupeFolderByName(files, preferIds) {
+  const byName = {};
+  for (const f of files) (byName[f.name] = byName[f.name] || []).push(f);
+
+  const survivors = new Set();
+  for (const group of Object.values(byName)) {
+    if (group.length === 1) { survivors.add(group[0].id); continue; }
+    const oldest = [...group].sort((a, b) =>
+      String(a.createdTime || '').localeCompare(String(b.createdTime || '')))[0];
+    const keep = group.find(f => preferIds?.has(f.id)) || oldest;
+    survivors.add(keep.id);
+    for (const extra of group) {
+      if (extra.id === keep.id) continue;
+      try {
+        await _driveFetch(`https://www.googleapis.com/drive/v3/files/${extra.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trashed: true })
+        });
+      } catch (e) { console.warn('[Drive] Could not trash duplicate:', extra.name, e.message); }
+    }
+  }
+  return survivors;
 }
 
 // A drive map records which photos are already on Drive so unchanged ones are
@@ -351,13 +408,18 @@ async function _driveFolderFileIds(folderId) {
 // not exist. So reconcile it against Drive before deciding what to upload.
 async function _reconcileDriveMap(driveMap, mediaFolderId) {
   if (!mediaFolderId) return { mediaFolderId, changed: false };
-  const existing = await _driveFolderFileIds(mediaFolderId);
+  const files = await _driveFolderFiles(mediaFolderId);
 
-  if (!existing) {
+  if (!files) {
     // Folder is gone: every id in this map is meaningless. Start over.
     for (const k of Object.keys(driveMap)) delete driveMap[k];
     return { mediaFolderId: null, changed: true };
   }
+
+  const mapped = new Set(Object.entries(driveMap)
+    .filter(([k]) => k !== 'folderId')
+    .map(([, e]) => e?.driveFileId).filter(Boolean));
+  const existing = await _dedupeFolderByName(files, mapped);
 
   let changed = false;
   for (const [key, entry] of Object.entries(driveMap)) {
@@ -509,7 +571,10 @@ function _driveDoneModal(title, message, type) {
 async function gdriveSave() {
   const p = getProject();
   if (!p) return toast('No project open', 'error');
+  if (_driveWriteBusy) return toast('A Drive save is already running', 'error');
   _driveAuth(async () => {
+    if (_driveWriteBusy) return toast('A Drive save is already running', 'error');
+    _driveWriteBusy = true;
     _driveProgressModal('☁ Saving to Google Drive', `Uploading "${esc(p.name)}"…`);
     try {
       await snapshotProject(p, 'before Drive save');
@@ -537,13 +602,18 @@ async function gdriveSave() {
         `"${esc(p.name)}" has been saved to Google Drive and verified.`);
     } catch (err) {
       _driveDoneModal('Save Failed', 'Error: ' + esc(err.message), 'error');
+    } finally {
+      _driveWriteBusy = false;
     }
   });
 }
 
 async function gdriveSaveAll() {
   if (!state.projects.length) return toast('No projects to save', 'error');
+  if (_driveWriteBusy) return toast('A Drive save is already running', 'error');
   _driveAuth(async () => {
+    if (_driveWriteBusy) return toast('A Drive save is already running', 'error');
+    _driveWriteBusy = true;
     const total = state.projects.length;
     _driveProgressModal('☁ Saving All to Google Drive', `Preparing to save ${total} project${total !== 1 ? 's' : ''}…`);
     try {
@@ -580,6 +650,8 @@ async function gdriveSaveAll() {
       }
     } catch (err) {
       _driveDoneModal('Save Failed', 'Error: ' + esc(err.message), 'error');
+    } finally {
+      _driveWriteBusy = false;
     }
   });
 }
@@ -809,9 +881,17 @@ function _gdriveQueuePhotoSync() {
 
 async function _gdriveAutoSync() {
   if (_autoSyncing || !_autoSyncDirty || !_driveToken || !navigator.onLine) return;
+  // A manual save is mid-flight — racing it would create duplicate files on
+  // Drive, so stay dirty and come back once it has finished.
+  if (_driveWriteBusy) {
+    clearTimeout(_autoSyncTimer);
+    _autoSyncTimer = setTimeout(_gdriveAutoSync, 15000);
+    return;
+  }
   const p = getProject();
   if (!p) return;
   _autoSyncing = true;
+  _driveWriteBusy = true;
   _autoSyncDirty = false;
   _showDriveSyncStatus('syncing');
 
@@ -848,6 +928,7 @@ async function _gdriveAutoSync() {
     }
   } finally {
     _autoSyncing = false;
+    _driveWriteBusy = false;
   }
 }
 
