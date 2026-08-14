@@ -93,7 +93,36 @@ async function _driveFetch(url, opts) {
     headers: { Authorization: 'Bearer ' + _driveToken, ...(opts?.headers || {}) }
   });
   if (resp.status === 401) { _driveToken = null; throw new Error('Auth expired — please try again'); }
+  // Anything else that is not OK must throw. Returning the response let a run
+  // of failed calls finish quietly and report "Save Complete" while nothing
+  // had actually reached Drive.
+  if (!resp.ok) throw new Error(await _driveErrorMessage(resp));
   return resp;
+}
+
+// Turns a Drive API error response into something a person can act on.
+async function _driveErrorMessage(resp) {
+  let msg = '';
+  try {
+    const body = await resp.json();
+    msg = body?.error?.message || '';
+  } catch (e) { /* non-JSON error body */ }
+
+  if (/has not been used in project|is disabled/i.test(msg)) {
+    const proj = (msg.match(/project (\d+)/) || [])[1];
+    return 'The Google Drive API is not enabled for this app'
+         + (proj ? ` (Cloud project ${proj})` : '')
+         + '. Enable it in the Google Cloud console, then try again.';
+  }
+  if (resp.status === 403 && /insufficient|scope/i.test(msg)) {
+    return 'This app was not granted Drive access. Sign out and sign in again to re-approve.';
+  }
+  if (resp.status === 403) return 'Google Drive refused the request: ' + (msg || 'permission denied');
+  if (resp.status === 404) return 'That file is no longer on Google Drive.';
+  if (resp.status === 429 || resp.status >= 500) {
+    return 'Google Drive is busy or unavailable right now — try again in a moment.';
+  }
+  return 'Google Drive error ' + resp.status + (msg ? ': ' + msg : '');
 }
 
 async function _getOrCreateDriveFolder() {
