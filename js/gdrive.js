@@ -284,6 +284,45 @@ async function _gdriveSaveMetadata(p, folderId, mediaFolderId) {
   await _driveWriteJson(folderId, _driveSafeName(p) + '_netrack.json', JSON.stringify(bundle), _projectDescription(p));
 }
 
+// Asks Drive what it actually holds for this project. Nothing may report a
+// save as complete without passing this first — an upload that quietly did
+// nothing must never be presented as a backup.
+async function _verifyDriveSave(p, folderId, mediaFolderId) {
+  const problems = [];
+
+  // 1. The metadata file must exist and be non-empty.
+  const name = _driveSafeName(p) + '_netrack.json';
+  const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+  let meta = null;
+  try {
+    const r = await _driveFetch(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,size)`);
+    meta = ((await r.json()).files || [])[0];
+  } catch (e) {
+    problems.push('could not read Drive back: ' + e.message);
+  }
+  if (!meta) problems.push('the project file is not on Drive');
+  else if (Number(meta.size || 0) === 0) problems.push('the project file on Drive is empty');
+
+  // 2. Every local photo must have a real file sitting in the media folder.
+  const photos = (p.photos || []).filter(ph => ph.id);
+  if (photos.length) {
+    const onDrive = mediaFolderId ? await _driveFolderFileIds(mediaFolderId) : null;
+    if (!onDrive) {
+      problems.push(`none of the ${photos.length} photos reached Drive`);
+    } else {
+      const driveMap = _getDriveMap(p.id);
+      const missing = photos.filter(ph => {
+        const id = driveMap[ph.id]?.driveFileId;
+        return !id || !onDrive.has(id);
+      }).length;
+      if (missing) problems.push(`${missing} of ${photos.length} photos are missing from Drive`);
+    }
+  }
+
+  return { ok: problems.length === 0, problems };
+}
+
 // ═══════════════════════════════════════════
 //  MEDIA SYNC — the single upload path used by
 //  manual save, save-all, and background auto-sync
@@ -291,10 +330,55 @@ async function _gdriveSaveMetadata(p, folderId, mediaFolderId) {
 // Uploads new/changed media (photos + legacy site-map/cable-map images) to the
 // project's *_media folder, deletes Drive files for locally-removed media, and
 // updates the drive map. Returns { mediaFolderId, changed }.
+// Returns the set of file ids inside a Drive folder, or null if that folder is
+// gone (deleted, trashed, or owned by a Google account we are no longer using).
+async function _driveFolderFileIds(folderId) {
+  try {
+    const r = await _driveFetch(
+      `https://www.googleapis.com/drive/v3/files/${folderId}?fields=id,trashed`);
+    if ((await r.json()).trashed) return null;
+    const files = await _listDriveFolder(folderId);
+    return new Set(files.map(f => f.id));
+  } catch (e) {
+    return null;
+  }
+}
+
+// A drive map records which photos are already on Drive so unchanged ones are
+// not re-uploaded. It can outlive the files it points at — a different Google
+// account, a deleted folder, files removed by hand. Trusting it then makes the
+// sync skip every photo and still report success, leaving a backup that does
+// not exist. So reconcile it against Drive before deciding what to upload.
+async function _reconcileDriveMap(driveMap, mediaFolderId) {
+  if (!mediaFolderId) return { mediaFolderId, changed: false };
+  const existing = await _driveFolderFileIds(mediaFolderId);
+
+  if (!existing) {
+    // Folder is gone: every id in this map is meaningless. Start over.
+    for (const k of Object.keys(driveMap)) delete driveMap[k];
+    return { mediaFolderId: null, changed: true };
+  }
+
+  let changed = false;
+  for (const [key, entry] of Object.entries(driveMap)) {
+    if (key === 'folderId') continue;
+    if (entry?.driveFileId && !existing.has(entry.driveFileId)) {
+      delete driveMap[key];
+      changed = true;
+    }
+  }
+  return { mediaFolderId, changed };
+}
+
 async function _syncProjectMedia(p, folderId, onProgress) {
   const driveMap = _getDriveMap(p.id);
   let mediaFolderId = driveMap.folderId || null;
   let changed = false;
+  let failed = 0;
+
+  const rec = await _reconcileDriveMap(driveMap, mediaFolderId);
+  mediaFolderId = rec.mediaFolderId;
+  if (rec.changed) { changed = true; driveMap.folderId = mediaFolderId || undefined; }
 
   // Gather all media: photos + legacy floor plans + legacy cable maps
   const allPhotos = (p.photos || []).filter(ph => ph.id);
@@ -338,7 +422,7 @@ async function _syncProjectMedia(p, folderId, onProgress) {
         driveMap[ph.id] = { driveFileId: did, dataLen: phData.length };
         if (!ph.dataLen) ph.dataLen = phData.length;
         changed = true;
-      } catch (e) { console.warn('[Drive] Photo upload failed:', ph.id, e.message); }
+      } catch (e) { failed++; console.warn('[Drive] Photo upload failed:', ph.id, e.message); }
       done++;
       if (onProgress) onProgress(done, total, `photo ${done}/${total}`);
     }
@@ -355,7 +439,7 @@ async function _syncProjectMedia(p, folderId, onProgress) {
         const did = await _driveUploadBlob(mediaFolderId, ex.fileBase + '.' + ext, blob, entry?.driveFileId);
         driveMap[ex.key] = { driveFileId: did, dataLen: ex.data.length };
         changed = true;
-      } catch (e) { console.warn('[Drive] Media upload failed:', ex.fileBase, e.message); }
+      } catch (e) { failed++; console.warn('[Drive] Media upload failed:', ex.fileBase, e.message); }
     }
     done++;
     if (onProgress) onProgress(done, total, ex.fileBase);
@@ -379,6 +463,8 @@ async function _syncProjectMedia(p, folderId, onProgress) {
     }
   }
   _saveDriveMap(p.id, driveMap);
+  // A media upload that failed must not be reported as a completed backup.
+  if (failed) throw new Error(`${failed} photo${failed !== 1 ? 's' : ''} failed to upload`);
   return { mediaFolderId, changed };
 }
 
@@ -434,10 +520,21 @@ async function gdriveSave() {
       });
       _driveProgressUpdate(90, 'Saving project metadata…');
       await _gdriveSaveMetadata(p, folderId, mediaFolderId);
+
+      _driveProgressUpdate(95, 'Checking Drive…');
+      const check = await _verifyDriveSave(p, folderId, mediaFolderId);
+      if (!check.ok) {
+        _driveDoneModal('Not Saved',
+          `"${esc(p.name)}" was NOT fully backed up — ${esc(check.problems.join('; '))}. ` +
+          `Please try again; do not rely on this as a backup.`, 'error');
+        return;
+      }
+
       _driveProgressUpdate(100);
       logChange('Project saved to Google Drive');
       save();
-      _driveDoneModal('Save Complete', `"${esc(p.name)}" has been saved to Google Drive.`);
+      _driveDoneModal('Save Complete',
+        `"${esc(p.name)}" has been saved to Google Drive and verified.`);
     } catch (err) {
       _driveDoneModal('Save Failed', 'Error: ' + esc(err.message), 'error');
     }
@@ -451,7 +548,8 @@ async function gdriveSaveAll() {
     _driveProgressModal('☁ Saving All to Google Drive', `Preparing to save ${total} project${total !== 1 ? 's' : ''}…`);
     try {
       const folderId = await _getOrCreateDriveFolder();
-      let saved = 0, failed = 0;
+      let saved = 0;
+      const problems = [];
       for (let i = 0; i < state.projects.length; i++) {
         const p = state.projects[i];
         _driveProgressUpdate(5 + (i / total) * 90, `Saving "${esc(p.name)}" (${i + 1} of ${total})…`);
@@ -459,14 +557,27 @@ async function gdriveSaveAll() {
           await snapshotProject(p, 'before Drive save (all)');
           const { mediaFolderId } = await _syncProjectMedia(p, folderId);
           await _gdriveSaveMetadata(p, folderId, mediaFolderId);
-          saved++;
-        } catch (err) { failed++; }
+          // Only a project Drive confirms it holds counts as saved.
+          const check = await _verifyDriveSave(p, folderId, mediaFolderId);
+          if (check.ok) saved++;
+          else problems.push(`${p.name}: ${check.problems.join('; ')}`);
+        } catch (err) {
+          problems.push(`${p.name}: ${err.message}`);
+        }
       }
       _driveProgressUpdate(100);
-      const msg = failed
-        ? `${saved} project${saved !== 1 ? 's' : ''} saved, ${failed} failed.`
-        : `All ${saved} project${saved !== 1 ? 's' : ''} saved successfully.`;
-      _driveDoneModal('Save Complete', msg, failed && !saved ? 'error' : undefined);
+
+      if (!problems.length) {
+        _driveDoneModal('Save Complete',
+          `All ${saved} project${saved !== 1 ? 's' : ''} saved to Google Drive and verified.`);
+      } else {
+        const list = problems.map(t => `• ${esc(t)}`).join('<br>');
+        _driveDoneModal(saved ? 'Partly Saved' : 'Not Saved',
+          `${saved} of ${total} project${total !== 1 ? 's' : ''} verified on Drive.<br><br>` +
+          `<b>Not backed up:</b><br>${list}<br><br>` +
+          `Do not rely on Drive for the projects listed above.`,
+          saved ? undefined : 'error');
+      }
     } catch (err) {
       _driveDoneModal('Save Failed', 'Error: ' + esc(err.message), 'error');
     }
