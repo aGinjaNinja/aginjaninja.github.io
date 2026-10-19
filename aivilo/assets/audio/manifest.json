@@ -1,0 +1,411 @@
+{
+ "oneshot": {
+  "ar_fire": {
+   "files": [
+    "ar_fire_1.mp3",
+    "ar_fire_2.mp3",
+    "ar_fire_3.mp3",
+    "ar_fire_4.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Rifle_Fire_01, Gun_Rifle_Fire_02, Gun_Rifle_Fire_03, Gun_Rifle_Fire_04"
+  },
+  "smg_fire": {
+   "files": [
+    "smg_fire_1.mp3",
+    "smg_fire_2.mp3",
+    "smg_fire_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_SMG_Fire_01, Gun_SMG_Fire_02, Gun_SMG_Fire_03"
+  },
+  "sniper_fire": {
+   "files": [
+    "sniper_fire_1.mp3",
+    "sniper_fire_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Sniper_Fire_01, Gun_Sniper_Fire_02"
+  },
+  "shotgun_fire": {
+   "files": [
+    "shotgun_fire_1.mp3",
+    "shotgun_fire_2.mp3",
+    "shotgun_fire_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Shotgun_Fire_01, Gun_Gauge12_Fire_01, Gun_Gauge12_Fire_02"
+  },
+  "lmg_fire": {
+   "files": [
+    "lmg_fire_1.mp3",
+    "lmg_fire_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Rifle_Fire_02, Gun_Rifle_Fire_04"
+  },
+  "pistol_fire": {
+   "files": [
+    "pistol_fire_1.mp3",
+    "pistol_fire_2.mp3",
+    "pistol_fire_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Pistol_Fire_01, Gun_Pistol_Fire_02, Gun_Pistol_Fire_03"
+  },
+  "mg_fire": {
+   "files": [
+    "mg_fire.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Fifty_Fire_02"
+  },
+  "ar_reload": {
+   "files": [
+    "ar_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Rifle_Reload"
+  },
+  "smg_reload": {
+   "files": [
+    "smg_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_SMG_Reload"
+  },
+  "sniper_reload": {
+   "files": [
+    "sniper_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Sniper_Reload"
+  },
+  "shotgun_reload": {
+   "files": [
+    "shotgun_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Shotgun_Reload"
+  },
+  "pistol_reload": {
+   "files": [
+    "pistol_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Pistol_Reload"
+  },
+  "lmg_reload": {
+   "files": [
+    "lmg_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Fifty_Reload"
+  },
+  "dry_fire": {
+   "files": [
+    "dry_fire.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_Rifle_Dry"
+  },
+  "equip": {
+   "files": [
+    "equip.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_PickUp_Heavy_01"
+  },
+  "pickup": {
+   "files": [
+    "pickup.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Gun_PickUp_Light_01"
+  },
+  "impact_dirt": {
+   "files": [
+    "impact_dirt_1.mp3",
+    "impact_dirt_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Impact_Dirt_01, Impact_Dirt_02"
+  },
+  "impact_metal": {
+   "files": [
+    "impact_metal_1.mp3",
+    "impact_metal_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Impact_Metal_01, Impact_Metal_02"
+  },
+  "impact_stone": {
+   "files": [
+    "impact_stone_1.mp3",
+    "impact_stone_2.mp3",
+    "impact_stone_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Impact_StoneRec_01, Impact_StoneRec_02, Impact_StoneRec_03"
+  },
+  "impact_wood": {
+   "files": [
+    "impact_wood_1.mp3",
+    "impact_wood_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Impact_Foliage_01, Impact_Foliage_02"
+  },
+  "ricochet": {
+   "files": [
+    "ricochet_1.mp3",
+    "ricochet_2.mp3",
+    "ricochet_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Impact_RicochetRec_01, Impact_RicochetRec_02, Impact_RicochetRec_03"
+  },
+  "hurt": {
+   "files": [
+    "hurt_1.mp3",
+    "hurt_2.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Hurt_01, Hurt_02"
+  },
+  "death": {
+   "files": [
+    "death.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Death_Ugh"
+  },
+  "jump": {
+   "files": [
+    "jump.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Jump_01"
+  },
+  "land": {
+   "files": [
+    "land.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Land_Grass"
+  },
+  "step_grass": {
+   "files": [
+    "step_grass_1.mp3",
+    "step_grass_2.mp3",
+    "step_grass_3.mp3",
+    "step_grass_4.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Step_Grass_01, Step_Grass_02, Step_Grass_03, Step_Grass_04"
+  },
+  "step_rock": {
+   "files": [
+    "step_rock_1.mp3",
+    "step_rock_2.mp3",
+    "step_rock_3.mp3",
+    "step_rock_4.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Step_Rock_01, Step_Rock_02, Step_Rock_03, Step_Rock_04"
+  },
+  "step_sand": {
+   "files": [
+    "step_sand_1.mp3",
+    "step_sand_2.mp3",
+    "step_sand_3.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Step_Sand_01, Step_Sand_02, Step_Sand_03"
+  },
+  "ui_open": {
+   "files": [
+    "ui_open.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Ui_Open"
+  },
+  "ui_close": {
+   "files": [
+    "ui_close.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Ui_Close"
+  },
+  "explosion": {
+   "files": [
+    "explosion.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Explosion_Shell_01"
+  },
+  "tank_fire": {
+   "files": [
+    "tank_fire.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Tank_Cannon_Fire_01"
+  },
+  "tank_reload": {
+   "files": [
+    "tank_reload.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Cannon_Breech"
+  },
+  "distant_boom": {
+   "files": [
+    "distant_boom.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Cannon_Distant"
+  },
+  "veh_land": {
+   "files": [
+    "veh_land.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Suspension_Land"
+  },
+  "jeep_start": {
+   "files": [
+    "jeep_start.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_V8_Start_850"
+  },
+  "tank_start": {
+   "files": [
+    "tank_start.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Diesel_Start_1400"
+  },
+  "quad_start": {
+   "files": [
+    "quad_start.mp3"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Dirt_Start_350"
+  },
+  "hitmarker": {
+   "files": [
+    "hitmarker.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "kill": {
+   "files": [
+    "kill.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "headshot": {
+   "files": [
+    "headshot.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "capture": {
+   "files": [
+    "capture.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "flag_lost": {
+   "files": [
+    "flag_lost.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "levelup": {
+   "files": [
+    "levelup.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "beep": {
+   "files": [
+    "beep.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "rpg_fire": {
+   "files": [
+    "rpg_fire.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "pin": {
+   "files": [
+    "pin.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "throw": {
+   "files": [
+    "throw.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "melee": {
+   "files": [
+    "melee.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  },
+  "spawn": {
+   "files": [
+    "spawn.mp3"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  }
+ },
+ "loop": {
+  "jeep_engine_lo": {
+   "files": [
+    "jeep_engine_lo.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_V8_Engine_780"
+  },
+  "jeep_engine_mid": {
+   "files": [
+    "jeep_engine_mid.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_V8_Engine_1620"
+  },
+  "jeep_engine_hi": {
+   "files": [
+    "jeep_engine_hi.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_V8_Engine_3000"
+  },
+  "quad_engine_lo": {
+   "files": [
+    "quad_engine_lo.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Dirt_Engine_1800"
+  },
+  "quad_engine_mid": {
+   "files": [
+    "quad_engine_mid.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Dirt_Engine_3600"
+  },
+  "quad_engine_hi": {
+   "files": [
+    "quad_engine_hi.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Dirt_Engine_6000"
+  },
+  "tank_engine_lo": {
+   "files": [
+    "tank_engine_lo.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Diesel_Engine_600"
+  },
+  "tank_engine_hi": {
+   "files": [
+    "tank_engine_hi.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Diesel_Engine_1080"
+  },
+  "tracks": {
+   "files": [
+    "tracks.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Tracks_12"
+  },
+  "tyre_skid": {
+   "files": [
+    "tyre_skid.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Tyre_Skid"
+  },
+  "turret": {
+   "files": [
+    "turret.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Turret_Traverse"
+  },
+  "wind": {
+   "files": [
+    "wind.wav"
+   ],
+   "source": "Game_SpaceOpenWorld/Audio: Wind_Low_Loop"
+  },
+  "heli_rotor": {
+   "files": [
+    "heli_rotor.wav"
+   ],
+   "source": "synthesised (tools/audio/convert_audio.py)"
+  }
+ }
+}

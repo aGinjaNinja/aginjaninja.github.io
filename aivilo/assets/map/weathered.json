@@ -1,0 +1,15 @@
+{
+ "size_m": 1600.0,
+ "res": 401,
+ "east_km": -0.6,
+ "north_km": -1.2,
+ "min_m": 913.8551442181491,
+ "max_m": 1494.7653127880117,
+ "source": "Game_SpaceOpenWorld home planet (hillshade.py port), seed 20260921",
+ "orient": 3,
+ "scale": 0.3,
+ "offset": -294.84,
+ "note": "game height = raw[orient] * scale + offset; x east = -X, z north = +Z (tools/map/fit_weathered.py)",
+ "base_m": -21.0,
+ "format": "uint16 cm above base_m, row 0 north, col 0 west, 4 m spacing"
+}

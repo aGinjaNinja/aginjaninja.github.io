@@ -43,6 +43,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/aivilo/')) return; // the AIVILO game (its own folder) manages its own files
 
   const isCode = url.pathname.endsWith('.js') || url.pathname.endsWith('.html') || url.pathname.endsWith('.css') || e.request.mode === 'navigate';
 
