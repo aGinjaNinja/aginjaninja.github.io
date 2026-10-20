@@ -31,13 +31,14 @@
  },
  "concrete": {
   "mean_srgb": [
-   0.742,
-   0.7448,
+   0.7224,
+   0.7224,
    0.7224
   ],
   "normal": true,
   "seam": 1.048,
-  "size": 512
+  "size": 512,
+  "source": "Concrete034"
  },
  "dirt": {
   "mean_srgb": [
