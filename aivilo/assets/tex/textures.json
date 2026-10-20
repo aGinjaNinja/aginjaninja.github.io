@@ -95,13 +95,14 @@
  },
  "metal_corrugated": {
   "mean_srgb": [
-   0.6032,
-   0.6097,
-   0.6207
+   0.4443,
+   0.4492,
+   0.449
   ],
   "normal": true,
   "seam": 0.962,
-  "size": 512
+  "size": 512,
+  "source": "CorrugatedSteel007B"
  },
  "plaster": {
   "mean_srgb": [
@@ -126,13 +127,14 @@
  },
  "roof_tiles": {
   "mean_srgb": [
-   0.6522,
-   0.3789,
-   0.2774
+   0.4833,
+   0.3087,
+   0.2279
   ],
   "normal": true,
   "seam": 1.759,
-  "size": 512
+  "size": 512,
+  "source": "RoofingTiles014A"
  },
  "rubber": {
   "detail": true,
@@ -178,12 +180,13 @@
  },
  "wood_planks": {
   "mean_srgb": [
-   0.7194,
-   0.5348,
-   0.3376
+   0.3925,
+   0.3519,
+   0.3036
   ],
   "normal": true,
   "seam": 0.958,
-  "size": 512
+  "size": 512,
+  "source": "WoodSiding011"
  }
 }
