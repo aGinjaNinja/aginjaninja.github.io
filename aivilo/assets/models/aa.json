@@ -1,0 +1,2030 @@
+{
+ "id": "aa",
+ "name": "Skyguard Anti-Aircraft Vehicle",
+ "materials": {
+  "armor_dark": {
+   "color": "#6C7558",
+   "metalness": 0.3,
+   "roughness": 0.7,
+   "texture": "metal"
+  },
+  "armor_main": {
+   "color": "#8C9A6E",
+   "metalness": 0.25,
+   "roughness": 0.65,
+   "texture": "camo"
+  },
+  "armor_tan": {
+   "color": "#B5A57E",
+   "metalness": 0.15,
+   "roughness": 0.75,
+   "texture": "none"
+  },
+  "canvas_olive": {
+   "color": "#7E8458",
+   "metalness": 0,
+   "roughness": 0.85,
+   "texture": "canvas"
+  },
+  "glass_optic": {
+   "color": "#183848",
+   "metalness": 0.9,
+   "roughness": 0.15,
+   "texture": "glass"
+  },
+  "gunmetal": {
+   "color": "#5A5F66",
+   "metalness": 0.8,
+   "roughness": 0.4,
+   "texture": "metal"
+  },
+  "light_head": {
+   "color": "#FFF6D6",
+   "emissive": "#FFE899",
+   "metalness": 0.1,
+   "roughness": 0.2,
+   "texture": "glass"
+  },
+  "light_tail": {
+   "color": "#D92B2B",
+   "emissive": "#B81D1D",
+   "metalness": 0.1,
+   "roughness": 0.3,
+   "texture": "glass"
+  },
+  "rubber_black": {
+   "color": "#1A1A1A",
+   "metalness": 0.05,
+   "roughness": 0.85,
+   "texture": "rubber"
+  },
+  "steel_worn": {
+   "color": "#8A8E90",
+   "metalness": 0.75,
+   "roughness": 0.5,
+   "texture": "metal"
+  },
+  "team_stripe": {
+   "color": "#C88A32",
+   "metalness": 0.2,
+   "roughness": 0.55,
+   "team": true,
+   "texture": "none"
+  },
+  "track_metal": {
+   "color": "#5E5A55",
+   "metalness": 0.6,
+   "roughness": 0.65,
+   "texture": "rust"
+  },
+  "missile_cap": {
+   "color": "#B8352A",
+   "metalness": 0.2,
+   "roughness": 0.55,
+   "texture": "none"
+  }
+ },
+ "groups": {
+  "track_l": {
+   "pivot": [
+    1.45,
+    0.55,
+    -0.1
+   ]
+  },
+  "track_r": {
+   "pivot": [
+    -1.45,
+    0.55,
+    -0.1
+   ]
+  },
+  "turret": {
+   "pivot": [
+    0,
+    1.38,
+    0
+   ]
+  },
+  "gun": {
+   "parent": "turret",
+   "pivot": [
+    0,
+    2.15,
+    0.1
+   ]
+  },
+  "radar": {
+   "parent": "turret",
+   "pivot": [
+    0,
+    3.16,
+    -1.05
+   ]
+  }
+ },
+ "anchors": {
+  "coax_muzzle": [
+   -0.55,
+   2.02,
+   1.72
+  ],
+  "exhaust_l": [
+   0.75,
+   1.05,
+   -3.58
+  ],
+  "exhaust_r": [
+   -0.75,
+   1.05,
+   -3.58
+  ],
+  "hatch": [
+   -0.42,
+   2.14,
+   -0.62
+  ],
+  "muzzle": [
+   1.25,
+   2.15,
+   1.2
+  ],
+  "seat_driver": [
+   0,
+   0.95,
+   2.05
+  ],
+  "muzzle_r": [
+   -1.25,
+   2.15,
+   1.2
+  ]
+ },
+ "colliders": [
+  {
+   "pos": [
+    0,
+    0.75,
+    -0.1
+   ],
+   "size": [
+    3.6,
+    1.5,
+    7
+   ]
+  },
+  {
+   "pos": [
+    0,
+    1.75,
+    -0.2
+   ],
+   "size": [
+    2,
+    0.85,
+    3.2
+   ]
+  },
+  {
+   "pos": [
+    0,
+    2.15,
+    0.15
+   ],
+   "size": [
+    3.1,
+    0.75,
+    2
+   ]
+  }
+ ],
+ "parts": [
+  {
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "track_l_bottom",
+   "pos": [
+    1.45,
+    0.04,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    5.1
+   ]
+  },
+  {
+   "group": "track_l",
+   "mat": "track_metal",
+   "name": "track_l_top",
+   "pos": [
+    1.45,
+    0.98,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    5.9
+   ]
+  },
+  {
+   "group": "track_l",
+   "mat": "track_metal",
+   "name": "track_l_ramp_f",
+   "pos": [
+    1.45,
+    0.34,
+    2.72
+   ],
+   "rot": [
+    -40,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    0.92
+   ]
+  },
+  {
+   "group": "track_l",
+   "mat": "track_metal",
+   "name": "track_l_ramp_r",
+   "pos": [
+    1.45,
+    0.35,
+    -2.88
+   ],
+   "rot": [
+    42,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    0.88
+   ]
+  },
+  {
+   "group": "track_l",
+   "mat": "armor_dark",
+   "name": "suspension_beam_l",
+   "pos": [
+    1.35,
+    0.44,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.42,
+    0.22,
+    5
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "steel_worn",
+   "name": "idler_l",
+   "pos": [
+    1.45,
+    0.66,
+    2.85
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.35,
+    0.35,
+    0.6
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "gunmetal",
+   "name": "sprocket_l",
+   "pos": [
+    1.45,
+    0.66,
+    -3.05
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.35,
+    0.35,
+    0.6
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "armor_dark",
+   "name": "sprocket_hub_l",
+   "pos": [
+    1.45,
+    0.66,
+    -3.05
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.19,
+    0.19,
+    0.66
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_1",
+   "pos": [
+    1.45,
+    0.4,
+    2.22
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_2",
+   "pos": [
+    1.45,
+    0.4,
+    1.45
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_3",
+   "pos": [
+    1.45,
+    0.4,
+    0.68
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_4",
+   "pos": [
+    1.45,
+    0.4,
+    -0.09
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_5",
+   "pos": [
+    1.45,
+    0.4,
+    -0.86
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_6",
+   "pos": [
+    1.45,
+    0.4,
+    -1.63
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_l",
+   "mat": "rubber_black",
+   "name": "wheel_l_7",
+   "pos": [
+    1.45,
+    0.4,
+    -2.4
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "track_r_bottom",
+   "pos": [
+    -1.45,
+    0.04,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    5.1
+   ]
+  },
+  {
+   "group": "track_r",
+   "mat": "track_metal",
+   "name": "track_r_top",
+   "pos": [
+    -1.45,
+    0.98,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    5.9
+   ]
+  },
+  {
+   "group": "track_r",
+   "mat": "track_metal",
+   "name": "track_r_ramp_f",
+   "pos": [
+    -1.45,
+    0.34,
+    2.72
+   ],
+   "rot": [
+    -40,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    0.92
+   ]
+  },
+  {
+   "group": "track_r",
+   "mat": "track_metal",
+   "name": "track_r_ramp_r",
+   "pos": [
+    -1.45,
+    0.35,
+    -2.88
+   ],
+   "rot": [
+    42,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    0.58,
+    0.08,
+    0.88
+   ]
+  },
+  {
+   "group": "track_r",
+   "mat": "armor_dark",
+   "name": "suspension_beam_r",
+   "pos": [
+    -1.35,
+    0.44,
+    -0.1
+   ],
+   "shape": "box",
+   "size": [
+    0.42,
+    0.22,
+    5
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "steel_worn",
+   "name": "idler_r",
+   "pos": [
+    -1.45,
+    0.66,
+    2.85
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.35,
+    0.35,
+    0.6
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "gunmetal",
+   "name": "sprocket_r",
+   "pos": [
+    -1.45,
+    0.66,
+    -3.05
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.35,
+    0.35,
+    0.6
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "armor_dark",
+   "name": "sprocket_hub_r",
+   "pos": [
+    -1.45,
+    0.66,
+    -3.05
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.19,
+    0.19,
+    0.66
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_1",
+   "pos": [
+    -1.45,
+    0.4,
+    2.22
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_2",
+   "pos": [
+    -1.45,
+    0.4,
+    1.45
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_3",
+   "pos": [
+    -1.45,
+    0.4,
+    0.68
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_4",
+   "pos": [
+    -1.45,
+    0.4,
+    -0.09
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_5",
+   "pos": [
+    -1.45,
+    0.4,
+    -0.86
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_6",
+   "pos": [
+    -1.45,
+    0.4,
+    -1.63
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "track_r",
+   "mat": "rubber_black",
+   "name": "wheel_r_7",
+   "pos": [
+    -1.45,
+    0.4,
+    -2.4
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.34,
+    0.34,
+    0.62
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "hull_lower",
+   "pos": [
+    0,
+    0.66,
+    -0.15
+   ],
+   "shape": "box",
+   "size": [
+    2.36,
+    0.68,
+    6.1
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "hull_lower_glacis",
+   "pos": [
+    0,
+    0.72,
+    3.02
+   ],
+   "rot": [
+    -32,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    2.36,
+    0.52,
+    0.75
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "hull_upper",
+   "pos": [
+    0,
+    1.19,
+    -0.35
+   ],
+   "shape": "box",
+   "size": [
+    3.44,
+    0.38,
+    5.7
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "hull_glacis_wedge",
+   "pos": [
+    0,
+    1.18,
+    2.95
+   ],
+   "shape": "wedge",
+   "size": [
+    2.36,
+    0.4,
+    0.9
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "hull_glacis_applique",
+   "pos": [
+    0,
+    1.2,
+    2.92
+   ],
+   "shape": "wedge",
+   "size": [
+    2.1,
+    0.34,
+    0.78
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "fender_front_l",
+   "pos": [
+    1.45,
+    1.15,
+    2.95
+   ],
+   "shape": "wedge",
+   "size": [
+    0.62,
+    0.34,
+    0.9
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "fender_front_r",
+   "pos": [
+    -1.45,
+    1.15,
+    2.95
+   ],
+   "shape": "wedge",
+   "size": [
+    0.62,
+    0.34,
+    0.9
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "hull_nose_beam",
+   "pos": [
+    0,
+    0.98,
+    3.32
+   ],
+   "shape": "box",
+   "size": [
+    3.48,
+    0.14,
+    0.16
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "tow_shackle_front_l",
+   "pos": [
+    0.85,
+    0.96,
+    3.36
+   ],
+   "shape": "torus",
+   "size": [
+    0.09,
+    0.03
+   ]
+  },
+  {
+   "axis": "x",
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "tow_shackle_front_r",
+   "pos": [
+    -0.85,
+    0.96,
+    3.36
+   ],
+   "shape": "torus",
+   "size": [
+    0.09,
+    0.03
+   ]
+  },
+  {
+   "axis": "y",
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "driver_hatch",
+   "pos": [
+    0,
+    1.4,
+    2.12
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.32,
+    0.34,
+    0.06
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "glass_optic",
+   "name": "driver_periscope",
+   "pos": [
+    0,
+    1.42,
+    2.36
+   ],
+   "shape": "box",
+   "size": [
+    0.52,
+    0.08,
+    0.12
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "headlight_box_l",
+   "pos": [
+    1.32,
+    1.24,
+    2.84
+   ],
+   "shape": "box",
+   "size": [
+    0.24,
+    0.2,
+    0.18
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "headlight_box_r",
+   "pos": [
+    -1.32,
+    1.24,
+    2.84
+   ],
+   "shape": "box",
+   "size": [
+    0.24,
+    0.2,
+    0.18
+   ]
+  },
+  {
+   "axis": "z",
+   "group": "body",
+   "mat": "light_head",
+   "name": "headlight_lens_l",
+   "pos": [
+    1.32,
+    1.24,
+    2.93
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.075,
+    0.075,
+    0.04
+   ]
+  },
+  {
+   "axis": "z",
+   "group": "body",
+   "mat": "light_head",
+   "name": "headlight_lens_r",
+   "pos": [
+    -1.32,
+    1.24,
+    2.93
+   ],
+   "shape": "cylinder",
+   "size": [
+    0.075,
+    0.075,
+    0.04
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "skirt_base_l",
+   "pos": [
+    1.74,
+    0.96,
+    -0.05
+   ],
+   "shape": "box",
+   "size": [
+    0.06,
+    0.62,
+    6.2
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "skirt_base_r",
+   "pos": [
+    -1.74,
+    0.96,
+    -0.05
+   ],
+   "shape": "box",
+   "size": [
+    0.06,
+    0.62,
+    6.2
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_front_l",
+   "pos": [
+    1.76,
+    1.04,
+    3.16
+   ],
+   "shape": "wedge",
+   "size": [
+    0.08,
+    0.45,
+    0.42
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_front_r",
+   "pos": [
+    -1.76,
+    1.04,
+    3.16
+   ],
+   "shape": "wedge",
+   "size": [
+    0.08,
+    0.45,
+    0.42
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_panel_1_l",
+   "pos": [
+    1.76,
+    0.98,
+    2.25
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.56,
+    1.35
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_panel_1_r",
+   "pos": [
+    -1.76,
+    0.98,
+    2.25
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.56,
+    1.35
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_panel_mid_l",
+   "pos": [
+    1.76,
+    0.98,
+    0.15
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.56,
+    2.75
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "skirt_panel_mid_r",
+   "pos": [
+    -1.76,
+    0.98,
+    0.15
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.56,
+    2.75
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "skirt_panel_4_l",
+   "pos": [
+    1.76,
+    1.04,
+    -2.1
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.44,
+    1.65
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "skirt_panel_4_r",
+   "pos": [
+    -1.76,
+    1.04,
+    -2.1
+   ],
+   "shape": "box",
+   "size": [
+    0.08,
+    0.44,
+    1.65
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "team_stripe",
+   "name": "team_marking_skirt_l",
+   "pos": [
+    1.76,
+    1.02,
+    2.35
+   ],
+   "shape": "box",
+   "size": [
+    0.09,
+    0.16,
+    0.65
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "team_stripe",
+   "name": "team_marking_skirt_r",
+   "pos": [
+    -1.76,
+    1.02,
+    2.35
+   ],
+   "shape": "box",
+   "size": [
+    0.09,
+    0.16,
+    0.65
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "engine_deck",
+   "pos": [
+    0,
+    1.4,
+    -2.25
+   ],
+   "shape": "box",
+   "size": [
+    2.2,
+    0.1,
+    1.75
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "engine_grille_top_l",
+   "pos": [
+    0.62,
+    1.46,
+    -2.25
+   ],
+   "shape": "box",
+   "size": [
+    0.78,
+    0.04,
+    1.2
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "engine_grille_top_r",
+   "pos": [
+    -0.62,
+    1.46,
+    -2.25
+   ],
+   "shape": "box",
+   "size": [
+    0.78,
+    0.04,
+    1.2
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "engine_hatch_center",
+   "pos": [
+    0,
+    1.46,
+    -2.25
+   ],
+   "shape": "box",
+   "size": [
+    0.36,
+    0.04,
+    1.1
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_main",
+   "name": "hull_rear_block",
+   "pos": [
+    0,
+    1.02,
+    -3.375
+   ],
+   "shape": "box",
+   "size": [
+    3.44,
+    0.72,
+    0.45
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "armor_dark",
+   "name": "hull_rear_lower",
+   "pos": [
+    0,
+    0.56,
+    -3.32
+   ],
+   "rot": [
+    28,
+    0,
+    0
+   ],
+   "shape": "box",
+   "size": [
+    2.36,
+    0.42,
+    0.45
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "exhaust_grille_l",
+   "pos": [
+    0.75,
+    1.05,
+    -3.56
+   ],
+   "shape": "box",
+   "size": [
+    0.82,
+    0.34,
+    0.08
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "gunmetal",
+   "name": "exhaust_grille_r",
+   "pos": [
+    -0.75,
+    1.05,
+    -3.56
+   ],
+   "shape": "box",
+   "size": [
+    0.82,
+    0.34,
+    0.08
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "steel_worn",
+   "name": "exhaust_slat_l",
+   "pos": [
+    0.75,
+    1.05,
+    -3.57
+   ],
+   "shape": "box",
+   "size": [
+    0.78,
+    0.08,
+    0.09
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "steel_worn",
+   "name": "exhaust_slat_r",
+   "pos": [
+    -0.75,
+    1.05,
+    -3.57
+   ],
+   "shape": "box",
+   "size": [
+    0.78,
+    0.08,
+    0.09
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "light_tail",
+   "name": "taillight_l",
+   "pos": [
+    1.42,
+    1.18,
+    -3.58
+   ],
+   "shape": "box",
+   "size": [
+    0.16,
+    0.09,
+    0.05
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "light_tail",
+   "name": "taillight_r",
+   "pos": [
+    -1.42,
+    1.18,
+    -3.58
+   ],
+   "shape": "box",
+   "size": [
+    0.16,
+    0.09,
+    0.05
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "rubber_black",
+   "name": "mudflap_rear_l",
+   "pos": [
+    1.45,
+    0.56,
+    -3.575
+   ],
+   "shape": "box",
+   "size": [
+    0.6,
+    0.32,
+    0.05
+   ]
+  },
+  {
+   "group": "body",
+   "mat": "rubber_black",
+   "name": "mudflap_rear_r",
+   "pos": [
+    -1.45,
+    0.56,
+    -3.575
+   ],
+   "shape": "box",
+   "size": [
+    0.6,
+    0.32,
+    0.05
+   ]
+  },
+  {
+   "axis": "y",
+   "group": "body",
+   "mat": "steel_worn",
+   "name": "turret_ring",
+   "pos": [
+    0,
+    1.4,
+    0.25
+   ],
+   "shape": "cylinder",
+   "size": [
+    1.12,
+    1.15,
+    0.1
+   ]
+  },
+  {
+   "name": "turret_base",
+   "group": "turret",
+   "mat": "armor_main",
+   "shape": "box",
+   "pos": [
+    0,
+    1.62,
+    -0.15
+   ],
+   "size": [
+    1.9,
+    0.48,
+    2.7
+   ]
+  },
+  {
+   "name": "turret_roof",
+   "group": "turret",
+   "mat": "armor_main",
+   "shape": "box",
+   "pos": [
+    0,
+    1.95,
+    -0.35
+   ],
+   "size": [
+    1.55,
+    0.26,
+    2.2
+   ]
+  },
+  {
+   "name": "turret_glacis",
+   "group": "turret",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    0,
+    1.74,
+    1.28
+   ],
+   "size": [
+    1.7,
+    0.3,
+    0.5
+   ],
+   "rot": [
+    -0.45,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "turret_bustle",
+   "group": "turret",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    0,
+    1.7,
+    -1.62
+   ],
+   "size": [
+    1.6,
+    0.42,
+    0.36
+   ]
+  },
+  {
+   "name": "stripe_l",
+   "group": "turret",
+   "mat": "team_stripe",
+   "shape": "box",
+   "pos": [
+    0.96,
+    1.7,
+    -0.3
+   ],
+   "size": [
+    0.02,
+    0.1,
+    1.7
+   ]
+  },
+  {
+   "name": "stripe_r",
+   "group": "turret",
+   "mat": "team_stripe",
+   "shape": "box",
+   "pos": [
+    -0.96,
+    1.7,
+    -0.3
+   ],
+   "size": [
+    0.02,
+    0.1,
+    1.7
+   ]
+  },
+  {
+   "name": "sensor_head",
+   "group": "turret",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    0.48,
+    2.23,
+    0.72
+   ],
+   "size": [
+    0.38,
+    0.3,
+    0.42
+   ]
+  },
+  {
+   "name": "sensor_lens",
+   "group": "turret",
+   "mat": "glass_optic",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    0.48,
+    2.24,
+    0.94
+   ],
+   "size": [
+    0.17,
+    0.17,
+    0.04
+   ]
+  },
+  {
+   "name": "hatch",
+   "group": "turret",
+   "mat": "armor_dark",
+   "shape": "cylinder",
+   "axis": "y",
+   "pos": [
+    -0.42,
+    2.11,
+    -0.62
+   ],
+   "size": [
+    0.52,
+    0.52,
+    0.06
+   ]
+  },
+  {
+   "name": "stowage_box",
+   "group": "turret",
+   "mat": "canvas_olive",
+   "shape": "box",
+   "pos": [
+    0,
+    1.96,
+    -1.32
+   ],
+   "size": [
+    1.2,
+    0.3,
+    0.42
+   ]
+  },
+  {
+   "name": "radar_mast",
+   "group": "turret",
+   "mat": "gunmetal",
+   "shape": "cylinder",
+   "axis": "y",
+   "pos": [
+    0,
+    2.62,
+    -1.05
+   ],
+   "size": [
+    0.14,
+    0.14,
+    1.06
+   ]
+  },
+  {
+   "name": "radar_hub",
+   "group": "radar",
+   "mat": "gunmetal",
+   "shape": "cylinder",
+   "axis": "y",
+   "pos": [
+    0,
+    3.16,
+    -1.05
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.12
+   ]
+  },
+  {
+   "name": "radar_arm",
+   "group": "radar",
+   "mat": "gunmetal",
+   "shape": "box",
+   "pos": [
+    0,
+    3.2,
+    -1.05
+   ],
+   "size": [
+    1.36,
+    0.07,
+    0.1
+   ]
+  },
+  {
+   "name": "radar_array",
+   "group": "radar",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    0,
+    3.26,
+    -0.99
+   ],
+   "size": [
+    1.28,
+    0.44,
+    0.05
+   ],
+   "rot": [
+    0.25,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "radar_face",
+   "group": "radar",
+   "mat": "steel_worn",
+   "shape": "box",
+   "pos": [
+    0,
+    3.27,
+    -0.96
+   ],
+   "size": [
+    1.18,
+    0.36,
+    0.01
+   ],
+   "rot": [
+    0.25,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "trunnion",
+   "group": "gun",
+   "mat": "gunmetal",
+   "shape": "cylinder",
+   "axis": "x",
+   "pos": [
+    0,
+    2.15,
+    0.1
+   ],
+   "size": [
+    0.22,
+    0.22,
+    2
+   ]
+  },
+  {
+   "name": "pod_l",
+   "group": "gun",
+   "mat": "armor_main",
+   "shape": "box",
+   "pos": [
+    1.25,
+    2.15,
+    0.15
+   ],
+   "size": [
+    0.62,
+    0.72,
+    2
+   ]
+  },
+  {
+   "name": "pod_l_rim",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    1.25,
+    2.15,
+    1.16
+   ],
+   "size": [
+    0.68,
+    0.78,
+    0.05
+   ]
+  },
+  {
+   "name": "pod_l_back",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    1.25,
+    2.15,
+    -0.86
+   ],
+   "size": [
+    0.66,
+    0.76,
+    0.04
+   ]
+  },
+  {
+   "name": "pod_l_stripe",
+   "group": "gun",
+   "mat": "team_stripe",
+   "shape": "box",
+   "pos": [
+    1.565,
+    2.15,
+    0.15
+   ],
+   "size": [
+    0.02,
+    0.12,
+    1.6
+   ]
+  },
+  {
+   "name": "pod_l_arm",
+   "group": "gun",
+   "mat": "gunmetal",
+   "shape": "box",
+   "pos": [
+    0.8,
+    2.15,
+    0.1
+   ],
+   "size": [
+    0.3,
+    0.16,
+    0.5
+   ]
+  },
+  {
+   "name": "pod_l_tube_ou",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    1.4,
+    2.32,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_l_tube_iu",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    1.1,
+    2.32,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_l_tube_od",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    1.4,
+    1.98,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_l_tube_id",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    1.1,
+    1.98,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_r",
+   "group": "gun",
+   "mat": "armor_main",
+   "shape": "box",
+   "pos": [
+    -1.25,
+    2.15,
+    0.15
+   ],
+   "size": [
+    0.62,
+    0.72,
+    2
+   ]
+  },
+  {
+   "name": "pod_r_rim",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    -1.25,
+    2.15,
+    1.16
+   ],
+   "size": [
+    0.68,
+    0.78,
+    0.05
+   ]
+  },
+  {
+   "name": "pod_r_back",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    -1.25,
+    2.15,
+    -0.86
+   ],
+   "size": [
+    0.66,
+    0.76,
+    0.04
+   ]
+  },
+  {
+   "name": "pod_r_stripe",
+   "group": "gun",
+   "mat": "team_stripe",
+   "shape": "box",
+   "pos": [
+    -1.565,
+    2.15,
+    0.15
+   ],
+   "size": [
+    0.02,
+    0.12,
+    1.6
+   ]
+  },
+  {
+   "name": "pod_r_arm",
+   "group": "gun",
+   "mat": "gunmetal",
+   "shape": "box",
+   "pos": [
+    -0.8,
+    2.15,
+    0.1
+   ],
+   "size": [
+    0.3,
+    0.16,
+    0.5
+   ]
+  },
+  {
+   "name": "pod_r_tube_ou",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    -1.4,
+    2.32,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_r_tube_iu",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    -1.1,
+    2.32,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_r_tube_od",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    -1.4,
+    1.98,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "pod_r_tube_id",
+   "group": "gun",
+   "mat": "missile_cap",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    -1.1,
+    1.98,
+    1.19
+   ],
+   "size": [
+    0.24,
+    0.24,
+    0.03
+   ]
+  },
+  {
+   "name": "coax_housing",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    -0.55,
+    2.02,
+    1
+   ],
+   "size": [
+    0.22,
+    0.2,
+    0.5
+   ]
+  },
+  {
+   "name": "coax_barrel",
+   "group": "gun",
+   "mat": "gunmetal",
+   "shape": "cylinder",
+   "axis": "z",
+   "pos": [
+    -0.55,
+    2.02,
+    1.45
+   ],
+   "size": [
+    0.06,
+    0.06,
+    0.5
+   ]
+  }
+ ]
+}
