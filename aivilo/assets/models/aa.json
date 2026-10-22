@@ -3,16 +3,16 @@
  "name": "Skyguard Anti-Aircraft Vehicle",
  "materials": {
   "armor_dark": {
-   "color": "#6C7558",
+   "color": "#646D52",
    "metalness": 0.3,
    "roughness": 0.7,
    "texture": "metal"
   },
   "armor_main": {
-   "color": "#8C9A6E",
+   "color": "#7F8C62",
    "metalness": 0.25,
    "roughness": 0.65,
-   "texture": "camo"
+   "texture": "metal"
   },
   "armor_tan": {
    "color": "#B5A57E",
@@ -33,9 +33,9 @@
    "texture": "glass"
   },
   "gunmetal": {
-   "color": "#5A5F66",
-   "metalness": 0.8,
-   "roughness": 0.4,
+   "color": "#6A6A62",
+   "metalness": 0.15,
+   "roughness": 0.62,
    "texture": "metal"
   },
   "light_head": {
@@ -59,9 +59,9 @@
    "texture": "rubber"
   },
   "steel_worn": {
-   "color": "#8A8E90",
-   "metalness": 0.75,
-   "roughness": 0.5,
+   "color": "#7E8284",
+   "metalness": 0.15,
+   "roughness": 0.6,
    "texture": "metal"
   },
   "team_stripe": {
@@ -73,7 +73,7 @@
   },
   "track_metal": {
    "color": "#5E5A55",
-   "metalness": 0.6,
+   "metalness": 0.2,
    "roughness": 0.65,
    "texture": "rust"
   },
@@ -1193,7 +1193,7 @@
   },
   {
    "group": "body",
-   "mat": "gunmetal",
+   "mat": "armor_dark",
    "name": "engine_grille_top_l",
    "pos": [
     0.62,
@@ -1209,7 +1209,7 @@
   },
   {
    "group": "body",
-   "mat": "gunmetal",
+   "mat": "armor_dark",
    "name": "engine_grille_top_r",
    "pos": [
     -0.62,
@@ -1278,7 +1278,7 @@
   },
   {
    "group": "body",
-   "mat": "gunmetal",
+   "mat": "armor_dark",
    "name": "exhaust_grille_l",
    "pos": [
     0.75,
@@ -1294,7 +1294,7 @@
   },
   {
    "group": "body",
-   "mat": "gunmetal",
+   "mat": "armor_dark",
    "name": "exhaust_grille_r",
    "pos": [
     -0.75,
