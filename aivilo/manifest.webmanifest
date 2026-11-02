@@ -19,5 +19,13 @@
       "type": "image/png"
     }
   ],
-  "orientation": "landscape"
+  "orientation": "landscape",
+  "id": "./",
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://vanniceguys.us/aivilo/manifest.webmanifest"
+    }
+  ],
+  "prefer_related_applications": false
 }
