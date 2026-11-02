@@ -105,6 +105,15 @@
   "size": 512,
   "source": "CorrugatedSteel007B"
  },
+ "paint": {
+  "mean_srgb": [
+   0.4936,
+   0.4935,
+   0.4826
+  ],
+  "seam": 0.953,
+  "size": 512
+ },
  "paving": {
   "mean_srgb": [
    0.532,
