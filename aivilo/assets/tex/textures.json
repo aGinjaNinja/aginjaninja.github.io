@@ -105,15 +105,6 @@
   "size": 512,
   "source": "CorrugatedSteel007B"
  },
- "paint": {
-  "mean_srgb": [
-   0.4936,
-   0.4935,
-   0.4826
-  ],
-  "seam": 0.953,
-  "size": 512
- },
  "paving": {
   "mean_srgb": [
    0.532,
@@ -188,6 +179,42 @@
   "seam": 1.0,
   "size": 1024,
   "source": "Weathered/sand (ambientCG, CC0)"
+ },
+ "veh_canvas": {
+  "range": [
+   0.335,
+   1.835
+  ],
+  "seam": 0.878,
+  "size": 512,
+  "vehicle": true
+ },
+ "veh_paint": {
+  "range": [
+   0.364,
+   1.583
+  ],
+  "seam": 1.272,
+  "size": 512,
+  "vehicle": true
+ },
+ "veh_steel": {
+  "range": [
+   0.324,
+   1.731
+  ],
+  "seam": 0.802,
+  "size": 512,
+  "vehicle": true
+ },
+ "veh_tread": {
+  "range": [
+   0.051,
+   2.749
+  ],
+  "seam": 1.167,
+  "size": 512,
+  "vehicle": true
  },
  "wood": {
   "mean_srgb": [

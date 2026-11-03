@@ -255,24 +255,6 @@
    ],
    "source": "Game_SpaceOpenWorld/VehicleAudio: Veh_Dirt_Start_350"
   },
-  "hitmarker": {
-   "files": [
-    "hitmarker.mp3"
-   ],
-   "source": "synthesised (tools/audio/convert_audio.py)"
-  },
-  "kill": {
-   "files": [
-    "kill.mp3"
-   ],
-   "source": "synthesised (tools/audio/convert_audio.py)"
-  },
-  "headshot": {
-   "files": [
-    "headshot.mp3"
-   ],
-   "source": "synthesised (tools/audio/convert_audio.py)"
-  },
   "capture": {
    "files": [
     "capture.mp3"

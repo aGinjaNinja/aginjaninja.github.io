@@ -3,25 +3,25 @@
  "name": "Skyguard Anti-Aircraft Vehicle",
  "materials": {
   "armor_dark": {
-   "color": "#646D52",
+   "color": "#363D30",
    "metalness": 0.3,
    "roughness": 0.7,
    "texture": "metal"
   },
   "armor_main": {
-   "color": "#7F8C62",
+   "color": "#4A5340",
    "metalness": 0.25,
    "roughness": 0.65,
    "texture": "metal"
   },
   "armor_tan": {
-   "color": "#B5A57E",
+   "color": "#8C7D62",
    "metalness": 0.15,
    "roughness": 0.75,
    "texture": "none"
   },
   "canvas_olive": {
-   "color": "#7E8458",
+   "color": "#5E6347",
    "metalness": 0,
    "roughness": 0.85,
    "texture": "canvas"
@@ -33,7 +33,7 @@
    "texture": "glass"
   },
   "gunmetal": {
-   "color": "#6A6A62",
+   "color": "#2B2E33",
    "metalness": 0.15,
    "roughness": 0.62,
    "texture": "metal"
@@ -59,7 +59,7 @@
    "texture": "rubber"
   },
   "steel_worn": {
-   "color": "#7E8284",
+   "color": "#52575D",
    "metalness": 0.15,
    "roughness": 0.6,
    "texture": "metal"
@@ -72,7 +72,7 @@
    "texture": "none"
   },
   "track_metal": {
-   "color": "#5E5A55",
+   "color": "#262523",
    "metalness": 0.2,
    "roughness": 0.65,
    "texture": "rust"
