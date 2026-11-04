@@ -2025,6 +2025,22 @@
     0.06,
     0.5
    ]
+  },
+  {
+   "name": "coax_bracket",
+   "group": "gun",
+   "mat": "armor_dark",
+   "shape": "box",
+   "pos": [
+    -0.8,
+    2.02,
+    0.95
+   ],
+   "size": [
+    0.34,
+    0.12,
+    0.2
+   ]
   }
  ]
 }
